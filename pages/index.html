@@ -53,20 +53,20 @@
 
       <div class="bg-blue-500/20 p-3 rounded-xl text-center">
         <p class="text-xs">Profit</p>
-        <p class="text-lg font-bold text-blue-400">{{ profit }}R</p>
+        <p class="text-lg font-bold text-blue-400">{{ profit }}</p>
       </div>
 
     </div>
 
-    <!-- 🔥 TRADINGVIEW CHART -->
+    <!-- TRADINGVIEW -->
     <div class="px-4 mb-4">
       <div class="bg-gray-900 p-4 rounded-xl">
-        <p class="text-sm text-gray-400 mb-2">Live XAUUSD Chart</p>
+        <p class="text-sm text-gray-400 mb-2">Live XAUUSD</p>
         <div id="tv_chart"></div>
       </div>
     </div>
 
-    <!-- SCORE TREND -->
+    <!-- SCORE -->
     <div class="px-4 mb-4">
       <div class="bg-gray-900 p-4 rounded-xl">
         <p class="text-sm text-gray-400 mb-2">Score Trend</p>
@@ -94,8 +94,11 @@
 
   <!-- HISTORY -->
   <div v-if="tab==='history'" class="px-4 pb-20">
+
     <transition-group name="fade">
-      <div v-for="s in signals" :key="s.id"
+      <div v-for="(s,i) in signals"
+           :key="s.id"
+           :class="i===0 ? 'border-2 border-yellow-400' : ''"
            class="bg-gray-900 mb-3 p-3 rounded-xl">
 
         <div class="flex justify-between">
@@ -114,6 +117,7 @@
 
       </div>
     </transition-group>
+
   </div>
 
   <!-- SETTINGS -->
@@ -124,7 +128,7 @@
     </button>
   </div>
 
-  <!-- NAVBAR BOTTOM -->
+  <!-- NAVBAR -->
   <div class="fixed bottom-0 left-0 right-0 bg-gray-900 p-3 flex justify-around border-t border-gray-800">
     <button @click="tab='dashboard'" :class="tabClass('dashboard')">🏠</button>
     <button @click="tab='history'" :class="tabClass('history')">📜</button>
@@ -143,13 +147,13 @@ Vue.createApp({
       signals: [],
       stats: {},
       winrate: 0,
-      avgScore: 0,
       profit: 0,
       equity: [],
       chart: null,
       equityChart: null,
       pieChart: null,
-      tvLoaded: false
+      tvLoaded: false,
+      lastSignalId: null
     }
   },
 
@@ -157,7 +161,10 @@ Vue.createApp({
 
     async loadData() {
       const res = await fetch(API + "/signals");
-      this.signals = await res.json();
+      const data = await res.json();
+
+      this.checkNewSignal(data);
+      this.signals = data;
 
       const statsRes = await fetch(API + "/stats");
       this.stats = await statsRes.json();
@@ -165,8 +172,28 @@ Vue.createApp({
       this.calculate();
       this.renderChart();
       this.renderExtraCharts();
+      this.initTV();
+    },
 
-      this.initTV(); // 🔥 load chart
+    checkNewSignal(data) {
+      if (!this.lastSignalId && data.length) {
+        this.lastSignalId = data[0].id;
+        return;
+      }
+
+      if (data.length && data[0].id !== this.lastSignalId) {
+        this.lastSignalId = data[0].id;
+
+        const s = data[0];
+
+        if (Notification.permission === "granted") {
+          new Notification(`${s.type} SIGNAL`, {
+            body: `Entry ${s.entry}`
+          });
+        }
+
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
     },
 
     initTV() {
@@ -177,8 +204,6 @@ Vue.createApp({
         symbol: "OANDA:XAUUSD",
         interval: "5",
         theme: "dark",
-        style: "1",
-        locale: "en",
         height: 400,
         width: "100%"
       });
@@ -187,15 +212,14 @@ Vue.createApp({
     },
 
     calculate() {
-      if (!this.signals.length) return;
-
       let wins = 0, losses = 0, equity = 0;
       this.equity = [];
 
       this.signals.slice().reverse().forEach(s => {
         if (s.result === "WIN") {
           wins++;
-          equity += 2;
+          const rr = Math.abs((s.tp - s.entry) / (s.entry - s.sl));
+          equity += rr;
         } else if (s.result === "LOSS") {
           losses++;
           equity -= 1;
@@ -204,62 +228,59 @@ Vue.createApp({
       });
 
       if (wins + losses > 0) {
-        this.winrate = Math.round((wins / (wins + losses)) * 100);
+        this.winrate = Math.round((wins/(wins+losses))*100);
       }
 
-      this.profit = equity;
+      this.profit = equity.toFixed(2);
     },
 
     renderChart() {
-      const scores = this.signals.map(s => s.score).slice(0, 20).reverse();
+      const scores = this.signals.map(s => s.score).slice(0,20).reverse();
 
       if (this.chart) this.chart.destroy();
 
       this.chart = new Chart(document.getElementById("chart"), {
         type: "line",
         data: {
-          labels: scores.map((_, i) => i + 1),
-          datasets: [{ data: scores, tension: 0.4 }]
-        },
-        options: {
-          plugins: { legend: { display: false } },
-          scales: { x: { display: false }, y: { display: false } }
+          labels: scores.map((_,i)=>i+1),
+          datasets:[{data:scores}]
         }
       });
     },
 
     renderExtraCharts() {
+
       if (this.equityChart) this.equityChart.destroy();
       if (this.pieChart) this.pieChart.destroy();
 
       this.equityChart = new Chart(document.getElementById("equityChart"), {
-        type: "line",
-        data: {
-          labels: this.equity.map((_, i) => i + 1),
-          datasets: [{ data: this.equity }]
+        type:"line",
+        data:{
+          labels:this.equity.map((_,i)=>i+1),
+          datasets:[{data:this.equity}]
         }
       });
 
-      const win = this.signals.filter(s => s.result === "WIN").length;
-      const loss = this.signals.filter(s => s.result === "LOSS").length;
+      const win = this.signals.filter(s=>s.result==="WIN").length;
+      const loss = this.signals.filter(s=>s.result==="LOSS").length;
 
       this.pieChart = new Chart(document.getElementById("pieChart"), {
-        type: "pie",
-        data: {
-          labels: ["Win", "Loss"],
-          datasets: [{ data: [win, loss] }]
+        type:"pie",
+        data:{
+          labels:["Win","Loss"],
+          datasets:[{data:[win,loss]}]
         }
       });
     },
 
     tabClass(name) {
-      return this.tab === name ? "text-blue-400" : "text-gray-400";
+      return this.tab===name ? "text-blue-400" : "text-gray-400";
     },
 
     enableNotif() {
-      Notification.requestPermission().then(p => {
-        if (p === "granted") {
-          new Notification("Notif aktif!");
+      Notification.requestPermission().then(p=>{
+        if(p==="granted"){
+          new Notification("Notification enabled 🚀");
         }
       });
     }
@@ -268,6 +289,7 @@ Vue.createApp({
 
   mounted() {
     this.loadData();
+    setInterval(()=>this.loadData(),10000);
   }
 
 }).mount("#app");
