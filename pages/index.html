@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XAU Bot Dashboard</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/vue@3"></script>
+
+</head>
+
+<body class="bg-gray-100">
+
+<div id="app" class="p-4 max-w-md mx-auto">
+
+  <!-- HEADER -->
+  <div class="flex justify-between items-center mb-4">
+    <h1 class="text-xl font-bold">📊 XAU Bot</h1>
+    <button @click="loadData" class="bg-blue-500 text-white px-3 py-1 rounded">
+      Refresh
+    </button>
+  </div>
+
+  <!-- STATS -->
+  <div class="grid grid-cols-3 gap-2 mb-4 text-center">
+    <div class="bg-white p-2 rounded shadow">
+      <p class="text-xs text-gray-500">Total</p>
+      <p class="font-bold">{{ stats.total }}</p>
+    </div>
+    <div class="bg-green-100 p-2 rounded shadow">
+      <p class="text-xs text-gray-500">Buy</p>
+      <p class="font-bold text-green-600">{{ stats.buy }}</p>
+    </div>
+    <div class="bg-red-100 p-2 rounded shadow">
+      <p class="text-xs text-gray-500">Sell</p>
+      <p class="font-bold text-red-600">{{ stats.sell }}</p>
+    </div>
+  </div>
+
+  <!-- SIGNAL LIST -->
+  <div v-for="s in signals" :key="s.id" 
+       class="bg-white mb-3 p-3 rounded shadow">
+
+    <!-- TYPE -->
+    <div class="flex justify-between items-center">
+      <span :class="s.type==='BUY' ? 'text-green-600' : 'text-red-600'" 
+            class="font-bold">
+        {{ s.type }}
+      </span>
+
+      <span class="text-xs bg-gray-200 px-2 py-1 rounded">
+        Score {{ s.score }}
+      </span>
+    </div>
+
+    <!-- PRICE -->
+    <div class="mt-2 text-sm">
+      <p>Entry: {{ s.entry }}</p>
+      <p>SL: {{ s.sl }}</p>
+      <p>TP: {{ s.tp }}</p>
+    </div>
+
+    <!-- REASON -->
+    <div class="text-xs text-gray-500 mt-2">
+      {{ parseReason(s.reason) }}
+    </div>
+
+    <!-- TIME -->
+    <div class="text-xs text-gray-400 mt-1">
+      {{ formatTime(s.timestamp) }}
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+const API = "https://worker-bot.jihadwajib68.workers.dev";
+
+Vue.createApp({
+  data() {
+    return {
+      signals: [],
+      stats: {}
+    }
+  },
+
+  methods: {
+    async loadData() {
+      const res1 = await fetch(API + "/signals");
+      this.signals = await res1.json();
+
+      const res2 = await fetch(API + "/stats");
+      this.stats = await res2.json();
+    },
+
+    parseReason(r) {
+      try {
+        return JSON.parse(r).join(", ");
+      } catch {
+        return r;
+      }
+    },
+
+    formatTime(ts) {
+      return new Date(ts * 1000).toLocaleString();
+    }
+  },
+
+  mounted() {
+    this.loadData();
+  }
+}).mount("#app");
+</script>
+
+</body>
+</html>
