@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
 
     // =========================
-    // CORS PREFLIGHT (WAJIB)
+    // CORS PREFLIGHT
     // =========================
     if (request.method === "OPTIONS") {
       return new Response(null, {
@@ -19,8 +19,16 @@ export default {
       try {
         const data = await request.json();
 
-        // SAVE KE DB
-        await env.DB.prepare(`
+        // VALIDASI BASIC
+        if (!data.type || !data.entry || !data.sl || !data.tp) {
+          return new Response(JSON.stringify({ error: "Invalid payload" }), {
+            status: 400,
+            headers: corsHeaders()
+          });
+        }
+
+        // INSERT DB + AMBIL ID
+        const result = await env.DB.prepare(`
           INSERT INTO signals (type, entry, sl, tp, score, reason, timestamp)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `).bind(
@@ -33,7 +41,9 @@ export default {
           data.timestamp
         ).run();
 
-        // TELEGRAM
+        const insertedId = result.meta.last_row_id;
+
+        // TELEGRAM MESSAGE
         const msg = `
 🔥 ${data.type} XAUUSD
 
@@ -54,7 +64,10 @@ Reason: ${data.reason.join(", ")}
           })
         });
 
-        return new Response(JSON.stringify({ status: "ok" }), {
+        return new Response(JSON.stringify({
+          status: "ok",
+          id: insertedId
+        }), {
           headers: corsHeaders()
         });
 
@@ -72,6 +85,13 @@ Reason: ${data.reason.join(", ")}
     if (url.pathname === "/update-result" && request.method === "POST") {
       try {
         const { id, result } = await request.json();
+
+        if (!id || !result) {
+          return new Response(JSON.stringify({ error: "Invalid payload" }), {
+            status: 400,
+            headers: corsHeaders()
+          });
+        }
 
         await env.DB.prepare(`
           UPDATE signals SET result = ? WHERE id = ?
@@ -103,7 +123,7 @@ Reason: ${data.reason.join(", ")}
     }
 
     // =========================
-    // GET STATS
+    // GET STATS (REAL)
     // =========================
     if (url.pathname === "/stats") {
       const total = await env.DB.prepare(`
@@ -140,7 +160,7 @@ Reason: ${data.reason.join(", ")}
     // =========================
     // DEFAULT
     // =========================
-    return new Response("Not Found", {
+    return new Response(JSON.stringify({ error: "Not found" }), {
       status: 404,
       headers: corsHeaders()
     });
