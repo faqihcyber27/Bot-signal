@@ -11,16 +11,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://s3.tradingview.com/tv.js"></script>
 
-<style>
-.fade-enter-active {
-  transition: all 0.4s ease;
-}
-.fade-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-</style>
-
 </head>
 
 <body class="bg-gray-950 text-white">
@@ -35,104 +25,74 @@
     </button>
   </div>
 
-  <!-- DASHBOARD -->
-  <div v-if="tab==='dashboard'">
+  <!-- STATS -->
+  <div class="p-4 grid grid-cols-2 gap-3">
 
-    <!-- STATS -->
-    <div class="p-4 grid grid-cols-3 gap-3">
-
-      <div class="bg-gray-800 p-3 rounded-xl text-center">
-        <p class="text-xs text-gray-400">Total</p>
-        <p class="text-lg font-bold">{{ stats.total }}</p>
-      </div>
-
-      <div class="bg-green-500/20 p-3 rounded-xl text-center">
-        <p class="text-xs">Winrate</p>
-        <p class="text-lg font-bold text-green-400">{{ winrate }}%</p>
-      </div>
-
-      <div class="bg-blue-500/20 p-3 rounded-xl text-center">
-        <p class="text-xs">Profit</p>
-        <p class="text-lg font-bold text-blue-400">{{ profit }}</p>
-      </div>
-
+    <div class="bg-gray-800 p-3 rounded-xl text-center">
+      <p class="text-xs text-gray-400">Total Trade</p>
+      <p class="text-lg font-bold">{{ stats.total }}</p>
     </div>
 
-    <!-- TRADINGVIEW -->
-    <div class="px-4 mb-4">
-      <div class="bg-gray-900 p-4 rounded-xl">
-        <p class="text-sm text-gray-400 mb-2">Live XAUUSD</p>
-        <div id="tv_chart"></div>
-      </div>
+    <div class="bg-green-500/20 p-3 rounded-xl text-center">
+      <p class="text-xs">Winrate</p>
+      <p class="text-lg font-bold text-green-400">{{ winrate }}%</p>
     </div>
 
-    <!-- SCORE -->
-    <div class="px-4 mb-4">
-      <div class="bg-gray-900 p-4 rounded-xl">
-        <p class="text-sm text-gray-400 mb-2">Score Trend</p>
-        <canvas id="chart"></canvas>
-      </div>
+    <div class="bg-blue-500/20 p-3 rounded-xl text-center">
+      <p class="text-xs">Profit</p>
+      <p class="text-lg font-bold text-blue-400">{{ profit }}</p>
     </div>
 
-    <!-- EQUITY -->
-    <div class="px-4 mb-4">
-      <div class="bg-gray-900 p-4 rounded-xl">
-        <p class="text-sm text-gray-400 mb-2">Equity Curve</p>
-        <canvas id="equityChart"></canvas>
-      </div>
+    <div class="bg-red-500/20 p-3 rounded-xl text-center">
+      <p class="text-xs">Max DD</p>
+      <p class="text-lg font-bold text-red-400">{{ maxDD }}</p>
     </div>
 
-    <!-- PIE -->
-    <div class="px-4 mb-4">
-      <div class="bg-gray-900 p-4 rounded-xl">
-        <p class="text-sm text-gray-400 mb-2">Win vs Loss</p>
-        <canvas id="pieChart"></canvas>
-      </div>
+    <div class="bg-yellow-500/20 p-3 rounded-xl text-center">
+      <p class="text-xs">Profit Factor</p>
+      <p class="text-lg font-bold text-yellow-400">{{ profitFactor }}</p>
+    </div>
+
+    <div class="bg-purple-500/20 p-3 rounded-xl text-center">
+      <p class="text-xs">Avg RR</p>
+      <p class="text-lg font-bold text-purple-400">{{ avgRR }}</p>
     </div>
 
   </div>
 
-  <!-- HISTORY -->
-  <div v-if="tab==='history'" class="px-4 pb-20">
-
-    <transition-group name="fade">
-      <div v-for="(s,i) in signals"
-           :key="s.id"
-           :class="i===0 ? 'border-2 border-yellow-400' : ''"
-           class="bg-gray-900 mb-3 p-3 rounded-xl">
-
-        <div class="flex justify-between">
-          <span :class="s.type==='BUY'?'text-green-400':'text-red-400'">
-            {{ s.type }}
-          </span>
-
-          <span v-if="s.result==='WIN'" class="text-green-400">WIN</span>
-          <span v-else-if="s.result==='LOSS'" class="text-red-400">LOSS</span>
-          <span v-else class="text-gray-500">OPEN</span>
-        </div>
-
-        <div class="text-xs mt-1">
-          Entry {{ s.entry }} | SL {{ s.sl }} | TP {{ s.tp }}
-        </div>
-
+  <!-- ACCOUNT -->
+  <div class="px-4 mb-4">
+    <div class="bg-gray-900 p-4 rounded-xl">
+      <p class="text-sm text-gray-400 mb-2">Account</p>
+      <div class="text-sm">
+        💰 Balance: {{ account.balance }} <br>
+        📊 Equity: {{ account.equity }} <br>
+        📉 Floating: {{ account.floating }}
       </div>
-    </transition-group>
-
+    </div>
   </div>
 
-  <!-- SETTINGS -->
-  <div v-if="tab==='settings'" class="p-4">
-    <button @click="enableNotif"
-      class="bg-green-500 px-4 py-2 rounded">
-      Enable Notification
-    </button>
+  <!-- TRADINGVIEW -->
+  <div class="px-4 mb-4">
+    <div class="bg-gray-900 p-4 rounded-xl">
+      <div id="tv_chart"></div>
+    </div>
   </div>
 
-  <!-- NAVBAR -->
-  <div class="fixed bottom-0 left-0 right-0 bg-gray-900 p-3 flex justify-around border-t border-gray-800">
-    <button @click="tab='dashboard'" :class="tabClass('dashboard')">🏠</button>
-    <button @click="tab='history'" :class="tabClass('history')">📜</button>
-    <button @click="tab='settings'" :class="tabClass('settings')">⚙️</button>
+  <!-- EQUITY -->
+  <div class="px-4 mb-4">
+    <div class="bg-gray-900 p-4 rounded-xl">
+      <p class="text-sm text-gray-400 mb-2">Equity Curve</p>
+      <canvas id="equityChart"></canvas>
+    </div>
+  </div>
+
+  <!-- DRAWDOWN -->
+  <div class="px-4 mb-4">
+    <div class="bg-gray-900 p-4 rounded-xl">
+      <p class="text-sm text-gray-400 mb-2">Drawdown</p>
+      <canvas id="ddChart"></canvas>
+    </div>
   </div>
 
 </div>
@@ -143,17 +103,23 @@ const API = "https://worker-bot.jihadwajib68.workers.dev";
 Vue.createApp({
   data() {
     return {
-      tab: "dashboard",
       signals: [],
       stats: {},
       winrate: 0,
       profit: 0,
+      maxDD: 0,
+      profitFactor: 0,
+      avgRR: 0,
       equity: [],
-      chart: null,
+      drawdown: [],
+      account: {
+        balance: 0,
+        equity: 0,
+        floating: 0
+      },
       equityChart: null,
-      pieChart: null,
-      tvLoaded: false,
-      lastSignalId: null
+      ddChart: null,
+      tvLoaded: false
     }
   },
 
@@ -161,39 +127,99 @@ Vue.createApp({
 
     async loadData() {
       const res = await fetch(API + "/signals");
-      const data = await res.json();
-
-      this.checkNewSignal(data);
-      this.signals = data;
+      this.signals = await res.json();
 
       const statsRes = await fetch(API + "/stats");
       this.stats = await statsRes.json();
 
+      const acc = await fetch(API + "/account");
+      this.account = await acc.json();
+
       this.calculate();
-      this.renderChart();
-      this.renderExtraCharts();
+      this.renderCharts();
       this.initTV();
     },
 
-    checkNewSignal(data) {
-      if (!this.lastSignalId && data.length) {
-        this.lastSignalId = data[0].id;
-        return;
-      }
+    calculate() {
+      let wins = 0, losses = 0;
+      let equity = 0;
+      let peak = 0;
+      let maxDD = 0;
 
-      if (data.length && data[0].id !== this.lastSignalId) {
-        this.lastSignalId = data[0].id;
+      let grossWin = 0;
+      let grossLoss = 0;
+      let totalRR = 0;
+      let rrCount = 0;
 
-        const s = data[0];
+      this.equity = [];
+      this.drawdown = [];
 
-        if (Notification.permission === "granted") {
-          new Notification(`${s.type} SIGNAL`, {
-            body: `Entry ${s.entry}`
-          });
+      this.signals.slice().reverse().forEach(s => {
+
+        if (s.result === "WIN") {
+          wins++;
+          grossWin++;
+          const rr = Math.abs((s.tp - s.entry) / (s.entry - s.sl));
+          totalRR += rr;
+          rrCount++;
+          equity += rr;
         }
 
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
+        if (s.result === "LOSS") {
+          losses++;
+          grossLoss++;
+          equity -= 1;
+        }
+
+        peak = Math.max(peak, equity);
+        const dd = peak - equity;
+        maxDD = Math.max(maxDD, dd);
+
+        this.equity.push(equity);
+        this.drawdown.push(dd);
+      });
+
+      this.winrate = wins + losses > 0
+        ? Math.round((wins / (wins + losses)) * 100)
+        : 0;
+
+      this.profit = equity.toFixed(2);
+      this.maxDD = maxDD.toFixed(2);
+      this.profitFactor = grossLoss > 0
+        ? (grossWin / grossLoss).toFixed(2)
+        : "∞";
+
+      this.avgRR = rrCount > 0
+        ? (totalRR / rrCount).toFixed(2)
+        : 0;
+    },
+
+    renderCharts() {
+
+      if (this.equityChart) this.equityChart.destroy();
+      if (this.ddChart) this.ddChart.destroy();
+
+      this.equityChart = new Chart(
+        document.getElementById("equityChart"),
+        {
+          type: "line",
+          data: {
+            labels: this.equity.map((_,i)=>i+1),
+            datasets:[{data:this.equity}]
+          }
+        }
+      );
+
+      this.ddChart = new Chart(
+        document.getElementById("ddChart"),
+        {
+          type: "line",
+          data: {
+            labels: this.drawdown.map((_,i)=>i+1),
+            datasets:[{data:this.drawdown}]
+          }
+        }
+      );
     },
 
     initTV() {
@@ -209,80 +235,6 @@ Vue.createApp({
       });
 
       this.tvLoaded = true;
-    },
-
-    calculate() {
-      let wins = 0, losses = 0, equity = 0;
-      this.equity = [];
-
-      this.signals.slice().reverse().forEach(s => {
-        if (s.result === "WIN") {
-          wins++;
-          const rr = Math.abs((s.tp - s.entry) / (s.entry - s.sl));
-          equity += rr;
-        } else if (s.result === "LOSS") {
-          losses++;
-          equity -= 1;
-        }
-        this.equity.push(equity);
-      });
-
-      if (wins + losses > 0) {
-        this.winrate = Math.round((wins/(wins+losses))*100);
-      }
-
-      this.profit = equity.toFixed(2);
-    },
-
-    renderChart() {
-      const scores = this.signals.map(s => s.score).slice(0,20).reverse();
-
-      if (this.chart) this.chart.destroy();
-
-      this.chart = new Chart(document.getElementById("chart"), {
-        type: "line",
-        data: {
-          labels: scores.map((_,i)=>i+1),
-          datasets:[{data:scores}]
-        }
-      });
-    },
-
-    renderExtraCharts() {
-
-      if (this.equityChart) this.equityChart.destroy();
-      if (this.pieChart) this.pieChart.destroy();
-
-      this.equityChart = new Chart(document.getElementById("equityChart"), {
-        type:"line",
-        data:{
-          labels:this.equity.map((_,i)=>i+1),
-          datasets:[{data:this.equity}]
-        }
-      });
-
-      const win = this.signals.filter(s=>s.result==="WIN").length;
-      const loss = this.signals.filter(s=>s.result==="LOSS").length;
-
-      this.pieChart = new Chart(document.getElementById("pieChart"), {
-        type:"pie",
-        data:{
-          labels:["Win","Loss"],
-          datasets:[{data:[win,loss]}]
-        }
-      });
-    },
-
-    tabClass(name) {
-      return this.tab===name ? "text-blue-400" : "text-gray-400";
-    },
-
-    enableNotif() {
-      Notification.requestPermission().then(p=>{
-        if(p==="granted"){
-          new Notification("Notification enabled 🚀");
-        }
-      });
     }
 
   },
