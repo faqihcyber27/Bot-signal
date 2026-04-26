@@ -1,175 +1,165 @@
 export default {
   async fetch(request, env) {
 
-    // =========================
-    // CORS PREFLIGHT
-    // =========================
     if (request.method === "OPTIONS") {
-      return new Response(null, {
-        headers: corsHeaders()
-      });
+      return new Response(null, { headers: corsHeaders() });
     }
 
     const url = new URL(request.url);
 
     // =========================
-    // POST SIGNAL
+    // SIGNAL
     // =========================
     if (url.pathname === "/signal" && request.method === "POST") {
       try {
         const data = await request.json();
 
-        // VALIDASI BASIC
-        if (!data.type || !data.entry || !data.sl || !data.tp) {
-          return new Response(JSON.stringify({ error: "Invalid payload" }), {
-            status: 400,
-            headers: corsHeaders()
-          });
+        if (!data.type || !data.entry) {
+          return json({ error: "invalid" }, 400);
         }
 
-        // INSERT DB + AMBIL ID
         const result = await env.DB.prepare(`
-          INSERT INTO signals (type, entry, sl, tp, score, reason, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO signals (type, entry, sl, tp, score, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?)
         `).bind(
           data.type,
           data.entry,
           data.sl,
           data.tp,
-          data.score,
-          JSON.stringify(data.reason),
+          data.score || 0,
+          data.timestamp || Date.now()
+        ).run();
+
+        return json({ status: "ok", id: result.meta.last_row_id });
+
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
+    // =========================
+    // 🔥 ACCOUNT (INI YANG LO BUTUH)
+    // =========================
+    if (url.pathname === "/account" && request.method === "POST") {
+      try {
+        const data = await request.json();
+
+        await env.DB.prepare(`
+          INSERT INTO account (balance, equity, profit, timestamp)
+          VALUES (?, ?, ?, ?)
+        `).bind(
+          data.balance,
+          data.equity,
+          data.profit,
           data.timestamp
         ).run();
 
-        const insertedId = result.meta.last_row_id;
-
-        // TELEGRAM MESSAGE
-        const msg = `
-🔥 ${data.type} XAUUSD
-
-Entry: ${data.entry}
-SL: ${data.sl}
-TP: ${data.tp}
-
-Score: ${data.score}
-Reason: ${data.reason.join(", ")}
-        `;
-
-        await fetch(`https://api.telegram.org/botYOUR_TOKEN/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: "YOUR_CHAT_ID",
-            text: msg
-          })
-        });
-
-        return new Response(JSON.stringify({
-          status: "ok",
-          id: insertedId
-        }), {
-          headers: corsHeaders()
-        });
+        return json({ status: "ok" });
 
       } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), {
-          status: 500,
-          headers: corsHeaders()
-        });
+        return json({ error: e.message }, 500);
       }
     }
 
     // =========================
-    // UPDATE RESULT (WIN / LOSS)
+    // 🔥 TRADE LOG
     // =========================
-    if (url.pathname === "/update-result" && request.method === "POST") {
+    if (url.pathname === "/trade" && request.method === "POST") {
       try {
-        const { id, result } = await request.json();
-
-        if (!id || !result) {
-          return new Response(JSON.stringify({ error: "Invalid payload" }), {
-            status: 400,
-            headers: corsHeaders()
-          });
-        }
+        const d = await request.json();
 
         await env.DB.prepare(`
-          UPDATE signals SET result = ? WHERE id = ?
-        `).bind(result, id).run();
+          INSERT INTO trades (type, entry, sl, tp, prob, timestamp)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+          d.type,
+          d.entry,
+          d.sl,
+          d.tp,
+          d.prob,
+          d.time
+        ).run();
 
-        return new Response(JSON.stringify({ status: "updated" }), {
-          headers: corsHeaders()
-        });
+        return json({ status: "ok" });
 
       } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), {
-          status: 500,
-          headers: corsHeaders()
-        });
+        return json({ error: e.message }, 500);
       }
     }
 
     // =========================
-    // GET SIGNALS
+    // 🔥 CLOSE LOG
     // =========================
-    if (url.pathname === "/signals") {
+    if (url.pathname === "/close" && request.method === "POST") {
+      try {
+        const d = await request.json();
+
+        await env.DB.prepare(`
+          INSERT INTO closes (profit, timestamp)
+          VALUES (?, ?)
+        `).bind(
+          d.profit,
+          Date.now()
+        ).run();
+
+        return json({ status: "ok" });
+
+      } catch (e) {
+        return json({ error: e.message }, 500);
+      }
+    }
+
+    // =========================
+    // GET ACCOUNT (UNTUK DASHBOARD)
+    // =========================
+    if (url.pathname === "/account") {
       const data = await env.DB.prepare(`
-        SELECT * FROM signals ORDER BY id DESC LIMIT 100
+        SELECT * FROM account ORDER BY id DESC LIMIT 1
+      `).first();
+
+      return json(data || {});
+    }
+
+    // =========================
+    // GET TRADES
+    // =========================
+    if (url.pathname === "/trades") {
+      const data = await env.DB.prepare(`
+        SELECT * FROM trades ORDER BY id DESC LIMIT 50
       `).all();
 
-      return new Response(JSON.stringify(data.results), {
-        headers: corsHeaders()
-      });
+      return json(data.results);
     }
 
     // =========================
-    // GET STATS (REAL)
+    // STATS
     // =========================
     if (url.pathname === "/stats") {
-      const total = await env.DB.prepare(`
-        SELECT COUNT(*) as total FROM signals
-      `).first();
+      const total = await env.DB.prepare(`SELECT COUNT(*) as total FROM trades`).first();
+      const win = await env.DB.prepare(`SELECT COUNT(*) as win FROM closes WHERE profit > 0`).first();
+      const loss = await env.DB.prepare(`SELECT COUNT(*) as loss FROM closes WHERE profit <= 0`).first();
 
-      const buy = await env.DB.prepare(`
-        SELECT COUNT(*) as buy FROM signals WHERE type='BUY'
-      `).first();
-
-      const sell = await env.DB.prepare(`
-        SELECT COUNT(*) as sell FROM signals WHERE type='SELL'
-      `).first();
-
-      const win = await env.DB.prepare(`
-        SELECT COUNT(*) as win FROM signals WHERE result='WIN'
-      `).first();
-
-      const loss = await env.DB.prepare(`
-        SELECT COUNT(*) as loss FROM signals WHERE result='LOSS'
-      `).first();
-
-      return new Response(JSON.stringify({
+      return json({
         total: total.total,
-        buy: buy.buy,
-        sell: sell.sell,
         win: win.win,
         loss: loss.loss
-      }), {
-        headers: corsHeaders()
       });
     }
 
-    // =========================
-    // DEFAULT
-    // =========================
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: corsHeaders()
-    });
+    return json({ error: "Not found" }, 404);
   }
 };
 
 // =========================
-// CORS HELPER
+// HELPER
 // =========================
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: corsHeaders()
+  });
+}
+
 function corsHeaders() {
   return {
     "Content-Type": "application/json",
