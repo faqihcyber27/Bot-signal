@@ -1,72 +1,72 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XAU Bot Dashboard</title>
+
+<title>XAU Dashboard</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/vue@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 </head>
 
 <body class="bg-gray-100">
 
-<div id="app" class="p-4 max-w-md mx-auto">
+<div id="app" class="max-w-md mx-auto p-4">
 
   <!-- HEADER -->
   <div class="flex justify-between items-center mb-4">
     <h1 class="text-xl font-bold">📊 XAU Bot</h1>
-    <button @click="loadData" class="bg-blue-500 text-white px-3 py-1 rounded">
+    <button @click="loadData" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">
       Refresh
     </button>
   </div>
 
   <!-- STATS -->
-  <div class="grid grid-cols-3 gap-2 mb-4 text-center">
+  <div class="grid grid-cols-3 gap-2 text-center mb-4">
     <div class="bg-white p-2 rounded shadow">
-      <p class="text-xs text-gray-500">Total</p>
+      <p class="text-xs">Total</p>
       <p class="font-bold">{{ stats.total }}</p>
     </div>
     <div class="bg-green-100 p-2 rounded shadow">
-      <p class="text-xs text-gray-500">Buy</p>
-      <p class="font-bold text-green-600">{{ stats.buy }}</p>
+      <p class="text-xs">Winrate</p>
+      <p class="font-bold text-green-600">{{ winrate }}%</p>
     </div>
-    <div class="bg-red-100 p-2 rounded shadow">
-      <p class="text-xs text-gray-500">Sell</p>
-      <p class="font-bold text-red-600">{{ stats.sell }}</p>
+    <div class="bg-blue-100 p-2 rounded shadow">
+      <p class="text-xs">Avg Score</p>
+      <p class="font-bold text-blue-600">{{ avgScore }}</p>
     </div>
+  </div>
+
+  <!-- CHART -->
+  <div class="bg-white p-3 rounded shadow mb-4">
+    <canvas id="winrateChart"></canvas>
   </div>
 
   <!-- SIGNAL LIST -->
   <div v-for="s in signals" :key="s.id" 
-       class="bg-white mb-3 p-3 rounded shadow">
+       class="bg-white p-3 mb-3 rounded shadow">
 
-    <!-- TYPE -->
-    <div class="flex justify-between items-center">
-      <span :class="s.type==='BUY' ? 'text-green-600' : 'text-red-600'" 
-            class="font-bold">
+    <div class="flex justify-between">
+      <span :class="s.type==='BUY' ? 'text-green-600' : 'text-red-600'" class="font-bold">
         {{ s.type }}
       </span>
 
-      <span class="text-xs bg-gray-200 px-2 py-1 rounded">
+      <span :class="scoreClass(s.score)" class="text-xs px-2 py-1 rounded">
         Score {{ s.score }}
       </span>
     </div>
 
-    <!-- PRICE -->
-    <div class="mt-2 text-sm">
-      <p>Entry: {{ s.entry }}</p>
-      <p>SL: {{ s.sl }}</p>
-      <p>TP: {{ s.tp }}</p>
+    <div class="text-sm mt-2">
+      Entry: {{ s.entry }} | SL: {{ s.sl }} | TP: {{ s.tp }}
     </div>
 
-    <!-- REASON -->
-    <div class="text-xs text-gray-500 mt-2">
+    <div class="text-xs text-gray-500 mt-1">
       {{ parseReason(s.reason) }}
     </div>
 
-    <!-- TIME -->
     <div class="text-xs text-gray-400 mt-1">
       {{ formatTime(s.timestamp) }}
     </div>
@@ -82,17 +82,61 @@ Vue.createApp({
   data() {
     return {
       signals: [],
-      stats: {}
+      stats: {},
+      winrate: 0,
+      avgScore: 0,
+      chart: null
     }
   },
 
   methods: {
-    async loadData() {
-      const res1 = await fetch(API + "/signals");
-      this.signals = await res1.json();
 
-      const res2 = await fetch(API + "/stats");
-      this.stats = await res2.json();
+    async loadData() {
+      const res = await fetch(API + "/signals");
+      this.signals = await res.json();
+
+      const statsRes = await fetch(API + "/stats");
+      this.stats = await statsRes.json();
+
+      this.calculateAnalytics();
+      this.renderChart();
+    },
+
+    calculateAnalytics() {
+      if (!this.signals.length) return;
+
+      let total = this.signals.length;
+
+      let win = this.signals.filter(s => s.score >= 7).length;
+      this.winrate = Math.round((win / total) * 100);
+
+      let sum = this.signals.reduce((a, b) => a + b.score, 0);
+      this.avgScore = (sum / total).toFixed(1);
+    },
+
+    renderChart() {
+      const scores = this.signals.map(s => s.score).slice(0, 20).reverse();
+
+      if (this.chart) this.chart.destroy();
+
+      const ctx = document.getElementById("winrateChart");
+
+      this.chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: scores.map((_, i) => i + 1),
+          datasets: [{
+            label: "Score Trend",
+            data: scores
+          }]
+        }
+      });
+    },
+
+    scoreClass(score) {
+      if (score >= 8) return "bg-green-200 text-green-700";
+      if (score >= 6) return "bg-yellow-200 text-yellow-700";
+      return "bg-red-200 text-red-700";
     },
 
     parseReason(r) {
