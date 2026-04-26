@@ -17,83 +17,78 @@
 
 <div id="app" class="max-w-md mx-auto">
 
-  <!-- NAVBAR -->
-  <div class="sticky top-0 bg-gray-900 p-4 flex justify-between items-center shadow-lg z-10">
-    <h1 class="text-lg font-bold">📊 XAU Bot</h1>
-    <button @click="loadData" class="bg-blue-500 px-3 py-1 rounded text-sm">
-      Refresh
-    </button>
+<!-- NAVBAR -->
+<div class="sticky top-0 bg-gray-900 p-4 flex justify-between">
+  <h1 class="font-bold">📊 Dashboard Tradingt</h1>
+  <button @click="loadData" class="bg-blue-500 px-3 py-1 rounded text-sm">
+    Refresh
+  </button>
+</div>
+
+<!-- STATS -->
+<div class="p-4 grid grid-cols-2 gap-3">
+
+  <div class="bg-gray-800 p-3 rounded text-center">
+    <p class="text-xs">Trades</p>
+    <p class="font-bold">{{ stats.total }}</p>
   </div>
 
-  <!-- STATS -->
-  <div class="p-4 grid grid-cols-2 gap-3">
-
-    <div class="bg-gray-800 p-3 rounded-xl text-center">
-      <p class="text-xs text-gray-400">Total Trade</p>
-      <p class="text-lg font-bold">{{ stats.total }}</p>
-    </div>
-
-    <div class="bg-green-500/20 p-3 rounded-xl text-center">
-      <p class="text-xs">Winrate</p>
-      <p class="text-lg font-bold text-green-400">{{ winrate }}%</p>
-    </div>
-
-    <div class="bg-blue-500/20 p-3 rounded-xl text-center">
-      <p class="text-xs">Profit</p>
-      <p class="text-lg font-bold text-blue-400">{{ profit }}</p>
-    </div>
-
-    <div class="bg-red-500/20 p-3 rounded-xl text-center">
-      <p class="text-xs">Max DD</p>
-      <p class="text-lg font-bold text-red-400">{{ maxDD }}</p>
-    </div>
-
-    <div class="bg-yellow-500/20 p-3 rounded-xl text-center">
-      <p class="text-xs">Profit Factor</p>
-      <p class="text-lg font-bold text-yellow-400">{{ profitFactor }}</p>
-    </div>
-
-    <div class="bg-purple-500/20 p-3 rounded-xl text-center">
-      <p class="text-xs">Avg RR</p>
-      <p class="text-lg font-bold text-purple-400">{{ avgRR }}</p>
-    </div>
-
+  <div class="bg-green-500/20 p-3 rounded text-center">
+    <p class="text-xs">Winrate</p>
+    <p class="text-green-400 font-bold">{{ winrate }}%</p>
   </div>
 
-  <!-- ACCOUNT -->
-  <div class="px-4 mb-4">
-    <div class="bg-gray-900 p-4 rounded-xl">
-      <p class="text-sm text-gray-400 mb-2">Account</p>
-      <div class="text-sm">
-        💰 Balance: {{ account.balance }} <br>
-        📊 Equity: {{ account.equity }} <br>
-        📉 Floating: {{ account.floating }}
-      </div>
-    </div>
+  <div class="bg-blue-500/20 p-3 rounded text-center">
+    <p class="text-xs">Profit</p>
+    <p class="text-blue-400 font-bold">{{ profit }}</p>
   </div>
 
-  <!-- TRADINGVIEW -->
-  <div class="px-4 mb-4">
-    <div class="bg-gray-900 p-4 rounded-xl">
-      <div id="tv_chart"></div>
-    </div>
+  <div class="bg-red-500/20 p-3 rounded text-center">
+    <p class="text-xs">Max DD</p>
+    <p class="text-red-400 font-bold">{{ maxDD }}</p>
   </div>
 
-  <!-- EQUITY -->
-  <div class="px-4 mb-4">
-    <div class="bg-gray-900 p-4 rounded-xl">
-      <p class="text-sm text-gray-400 mb-2">Equity Curve</p>
-      <canvas id="equityChart"></canvas>
-    </div>
+  <div class="bg-yellow-500/20 p-3 rounded text-center">
+    <p class="text-xs">Profit Factor</p>
+    <p class="text-yellow-400 font-bold">{{ profitFactor }}</p>
   </div>
 
-  <!-- DRAWDOWN -->
-  <div class="px-4 mb-4">
-    <div class="bg-gray-900 p-4 rounded-xl">
-      <p class="text-sm text-gray-400 mb-2">Drawdown</p>
-      <canvas id="ddChart"></canvas>
-    </div>
+  <div class="bg-purple-500/20 p-3 rounded text-center">
+    <p class="text-xs">Avg Profit</p>
+    <p class="text-purple-400 font-bold">{{ avgProfit }}</p>
   </div>
+
+</div>
+
+<!-- ACCOUNT -->
+<div class="px-4 mb-4">
+  <div class="bg-gray-900 p-4 rounded">
+    💰 Balance: {{ account.balance }} <br>
+    📊 Equity: {{ account.equity }} <br>
+    📉 Floating: {{ account.profit }}
+  </div>
+</div>
+
+<!-- TV -->
+<div class="px-4 mb-4">
+  <div class="bg-gray-900 p-4 rounded">
+    <div id="tv_chart"></div>
+  </div>
+</div>
+
+<!-- EQUITY -->
+<div class="px-4 mb-4">
+  <div class="bg-gray-900 p-4 rounded">
+    <canvas id="equityChart"></canvas>
+  </div>
+</div>
+
+<!-- DD -->
+<div class="px-4 mb-4">
+  <div class="bg-gray-900 p-4 rounded">
+    <canvas id="ddChart"></canvas>
+  </div>
+</div>
 
 </div>
 
@@ -101,148 +96,147 @@
 const API = "https://worker-bot.jihadwajib68.workers.dev";
 
 Vue.createApp({
-  data() {
-    return {
-      signals: [],
-      stats: {},
-      winrate: 0,
-      profit: 0,
-      maxDD: 0,
-      profitFactor: 0,
-      avgRR: 0,
-      equity: [],
-      drawdown: [],
-      account: {
-        balance: 0,
-        equity: 0,
-        floating: 0
-      },
-      equityChart: null,
-      ddChart: null,
-      tvLoaded: false
-    }
-  },
-
-  methods: {
-
-    async loadData() {
-      const res = await fetch(API + "/signals");
-      this.signals = await res.json();
-
-      const statsRes = await fetch(API + "/stats");
-      this.stats = await statsRes.json();
-
-      const acc = await fetch(API + "/account");
-      this.account = await acc.json();
-
-      this.calculate();
-      this.renderCharts();
-      this.initTV();
-    },
-
-    calculate() {
-      let wins = 0, losses = 0;
-      let equity = 0;
-      let peak = 0;
-      let maxDD = 0;
-
-      let grossWin = 0;
-      let grossLoss = 0;
-      let totalRR = 0;
-      let rrCount = 0;
-
-      this.equity = [];
-      this.drawdown = [];
-
-      this.signals.slice().reverse().forEach(s => {
-
-        if (s.result === "WIN") {
-          wins++;
-          grossWin++;
-          const rr = Math.abs((s.tp - s.entry) / (s.entry - s.sl));
-          totalRR += rr;
-          rrCount++;
-          equity += rr;
-        }
-
-        if (s.result === "LOSS") {
-          losses++;
-          grossLoss++;
-          equity -= 1;
-        }
-
-        peak = Math.max(peak, equity);
-        const dd = peak - equity;
-        maxDD = Math.max(maxDD, dd);
-
-        this.equity.push(equity);
-        this.drawdown.push(dd);
-      });
-
-      this.winrate = wins + losses > 0
-        ? Math.round((wins / (wins + losses)) * 100)
-        : 0;
-
-      this.profit = equity.toFixed(2);
-      this.maxDD = maxDD.toFixed(2);
-      this.profitFactor = grossLoss > 0
-        ? (grossWin / grossLoss).toFixed(2)
-        : "∞";
-
-      this.avgRR = rrCount > 0
-        ? (totalRR / rrCount).toFixed(2)
-        : 0;
-    },
-
-    renderCharts() {
-
-      if (this.equityChart) this.equityChart.destroy();
-      if (this.ddChart) this.ddChart.destroy();
-
-      this.equityChart = new Chart(
-        document.getElementById("equityChart"),
-        {
-          type: "line",
-          data: {
-            labels: this.equity.map((_,i)=>i+1),
-            datasets:[{data:this.equity}]
-          }
-        }
-      );
-
-      this.ddChart = new Chart(
-        document.getElementById("ddChart"),
-        {
-          type: "line",
-          data: {
-            labels: this.drawdown.map((_,i)=>i+1),
-            datasets:[{data:this.drawdown}]
-          }
-        }
-      );
-    },
-
-    initTV() {
-      if (this.tvLoaded) return;
-
-      new TradingView.widget({
-        container_id: "tv_chart",
-        symbol: "OANDA:XAUUSD",
-        interval: "5",
-        theme: "dark",
-        height: 400,
-        width: "100%"
-      });
-
-      this.tvLoaded = true;
-    }
-
-  },
-
-  mounted() {
-    this.loadData();
-    setInterval(()=>this.loadData(),10000);
+data(){
+  return{
+    trades:[],
+    closes:[],
+    stats:{},
+    account:{},
+    equity:[],
+    drawdown:[],
+    winrate:0,
+    profit:0,
+    maxDD:0,
+    profitFactor:0,
+    avgProfit:0,
+    equityChart:null,
+    ddChart:null,
+    tvLoaded:false
   }
+},
+
+methods:{
+
+async loadData(){
+
+  // 🔥 FIX: pakai endpoint benar
+  const t = await fetch(API+"/trades");
+  this.trades = await t.json();
+
+  const c = await fetch(API+"/stats");
+  this.stats = await c.json();
+
+  const acc = await fetch(API+"/account");
+  this.account = await acc.json();
+
+  const closeRes = await fetch(API+"/trades"); // fallback
+  this.closes = await closeRes.json();
+
+  this.calculate();
+  this.renderCharts();
+  this.initTV();
+},
+
+calculate(){
+
+  let equity = 0;
+  let peak = 0;
+  let maxDD = 0;
+
+  let wins = this.stats.win || 0;
+  let losses = this.stats.loss || 0;
+
+  let grossWin = 0;
+  let grossLoss = 0;
+
+  this.equity = [];
+  this.drawdown = [];
+
+  // 🔥 REAL: pakai profit real dari closes
+  this.closes.forEach(t => {
+
+    let p = t.profit || 0;
+
+    equity += p;
+
+    if(p > 0) grossWin += p;
+    else grossLoss += Math.abs(p);
+
+    peak = Math.max(peak, equity);
+    let dd = peak - equity;
+
+    maxDD = Math.max(maxDD, dd);
+
+    this.equity.push(equity);
+    this.drawdown.push(dd);
+
+  });
+
+  this.winrate = wins + losses > 0
+    ? Math.round((wins/(wins+losses))*100)
+    : 0;
+
+  this.profit = equity.toFixed(2);
+  this.maxDD = maxDD.toFixed(2);
+
+  this.profitFactor = grossLoss > 0
+    ? (grossWin/grossLoss).toFixed(2)
+    : "∞";
+
+  this.avgProfit = this.closes.length > 0
+    ? (equity / this.closes.length).toFixed(2)
+    : 0;
+},
+
+renderCharts(){
+
+  if(this.equityChart) this.equityChart.destroy();
+  if(this.ddChart) this.ddChart.destroy();
+
+  this.equityChart = new Chart(
+    document.getElementById("equityChart"),
+    {
+      type:"line",
+      data:{
+        labels:this.equity.map((_,i)=>i),
+        datasets:[{data:this.equity}]
+      }
+    }
+  );
+
+  this.ddChart = new Chart(
+    document.getElementById("ddChart"),
+    {
+      type:"line",
+      data:{
+        labels:this.drawdown.map((_,i)=>i),
+        datasets:[{data:this.drawdown}]
+      }
+    }
+  );
+},
+
+initTV(){
+  if(this.tvLoaded) return;
+
+  new TradingView.widget({
+    container_id:"tv_chart",
+    symbol:"OANDA:XAUUSD",
+    interval:"5",
+    theme:"dark",
+    height:400,
+    width:"100%"
+  });
+
+  this.tvLoaded = true;
+}
+
+},
+
+mounted(){
+  this.loadData();
+  setInterval(()=>this.loadData(),10000);
+}
 
 }).mount("#app");
 </script>
