@@ -4,73 +4,109 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>XAU Dashboard</title>
+<title>XAU Bot Pro</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/vue@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
+<style>
+.fade-enter-active {
+  transition: all 0.4s ease;
+}
+.fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+</style>
+
 </head>
 
-<body class="bg-gray-100">
+<body class="bg-gray-950 text-white">
 
-<div id="app" class="max-w-md mx-auto p-4">
+<div id="app" class="max-w-md mx-auto">
 
-  <!-- HEADER -->
-  <div class="flex justify-between items-center mb-4">
-    <h1 class="text-xl font-bold">📊 XAU Bot</h1>
-    <button @click="loadData" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">
+  <!-- NAVBAR -->
+  <div class="sticky top-0 bg-gray-900 p-4 flex justify-between items-center shadow-lg z-10">
+    <h1 class="text-lg font-bold">📊 XAU Bot</h1>
+    <button @click="loadData" class="bg-blue-500 px-3 py-1 rounded text-sm">
       Refresh
     </button>
   </div>
 
   <!-- STATS -->
-  <div class="grid grid-cols-3 gap-2 text-center mb-4">
-    <div class="bg-white p-2 rounded shadow">
-      <p class="text-xs">Total</p>
-      <p class="font-bold">{{ stats.total }}</p>
+  <div class="p-4 grid grid-cols-3 gap-3">
+
+    <div class="bg-gray-800 p-3 rounded-xl shadow text-center">
+      <p class="text-xs text-gray-400">Total</p>
+      <p class="text-lg font-bold">{{ stats.total }}</p>
     </div>
-    <div class="bg-green-100 p-2 rounded shadow">
+
+    <div class="bg-green-500/20 p-3 rounded-xl text-center">
       <p class="text-xs">Winrate</p>
-      <p class="font-bold text-green-600">{{ winrate }}%</p>
+      <p class="text-lg font-bold text-green-400">{{ winrate }}%</p>
     </div>
-    <div class="bg-blue-100 p-2 rounded shadow">
+
+    <div class="bg-blue-500/20 p-3 rounded-xl text-center">
       <p class="text-xs">Avg Score</p>
-      <p class="font-bold text-blue-600">{{ avgScore }}</p>
+      <p class="text-lg font-bold text-blue-400">{{ avgScore }}</p>
     </div>
+
   </div>
 
-  <!-- CHART -->
-  <div class="bg-white p-3 rounded shadow mb-4">
-    <canvas id="winrateChart"></canvas>
+  <!-- CHART SECTION -->
+  <div class="px-4 mb-4">
+    <div class="bg-gray-900 p-4 rounded-xl shadow">
+      <p class="text-sm mb-2 text-gray-400">Score Trend</p>
+      <canvas id="chart"></canvas>
+    </div>
   </div>
 
   <!-- SIGNAL LIST -->
-  <div v-for="s in signals" :key="s.id" 
-       class="bg-white p-3 mb-3 rounded shadow">
+  <div class="px-4 pb-20">
 
-    <div class="flex justify-between">
-      <span :class="s.type==='BUY' ? 'text-green-600' : 'text-red-600'" class="font-bold">
-        {{ s.type }}
-      </span>
+    <transition-group name="fade">
+      <div v-for="s in signals" :key="s.id"
+           class="bg-gray-900 mb-3 p-4 rounded-xl shadow">
 
-      <span :class="scoreClass(s.score)" class="text-xs px-2 py-1 rounded">
-        Score {{ s.score }}
-      </span>
-    </div>
+        <div class="flex justify-between items-center">
+          <span :class="s.type==='BUY' ? 'text-green-400' : 'text-red-400'"
+                class="font-bold">
+            {{ s.type }}
+          </span>
 
-    <div class="text-sm mt-2">
-      Entry: {{ s.entry }} | SL: {{ s.sl }} | TP: {{ s.tp }}
-    </div>
+          <span :class="scoreClass(s.score)"
+                class="text-xs px-2 py-1 rounded">
+            {{ s.score }}
+          </span>
+        </div>
 
-    <div class="text-xs text-gray-500 mt-1">
-      {{ parseReason(s.reason) }}
-    </div>
+        <div class="text-sm mt-2">
+          Entry: {{ s.entry }}
+        </div>
 
-    <div class="text-xs text-gray-400 mt-1">
-      {{ formatTime(s.timestamp) }}
-    </div>
+        <div class="text-xs text-gray-400">
+          SL: {{ s.sl }} | TP: {{ s.tp }}
+        </div>
 
+        <div class="text-xs mt-1 text-gray-500">
+          {{ parseReason(s.reason) }}
+        </div>
+
+        <div class="text-xs mt-1 text-gray-600">
+          {{ formatTime(s.timestamp) }}
+        </div>
+
+      </div>
+    </transition-group>
+
+  </div>
+
+  <!-- NAVBAR BOTTOM -->
+  <div class="fixed bottom-0 left-0 right-0 bg-gray-900 p-3 flex justify-around border-t border-gray-800">
+    <button class="text-blue-400">Dashboard</button>
+    <button class="text-gray-400">History</button>
+    <button class="text-gray-400">Settings</button>
   </div>
 
 </div>
@@ -98,19 +134,23 @@ Vue.createApp({
       const statsRes = await fetch(API + "/stats");
       this.stats = await statsRes.json();
 
-      this.calculateAnalytics();
+      this.calculate();
       this.renderChart();
     },
 
-    calculateAnalytics() {
+    calculate() {
       if (!this.signals.length) return;
 
-      let total = this.signals.length;
+      const total = this.signals.length;
 
-      let win = this.signals.filter(s => s.score >= 7).length;
-      this.winrate = Math.round((win / total) * 100);
+      const wins = this.signals.filter(s => s.result === "WIN").length;
+      const losses = this.signals.filter(s => s.result === "LOSS").length;
 
-      let sum = this.signals.reduce((a, b) => a + b.score, 0);
+      if (wins + losses > 0) {
+        this.winrate = Math.round((wins / (wins + losses)) * 100);
+      }
+
+      const sum = this.signals.reduce((a, b) => a + b.score, 0);
       this.avgScore = (sum / total).toFixed(1);
     },
 
@@ -119,24 +159,32 @@ Vue.createApp({
 
       if (this.chart) this.chart.destroy();
 
-      const ctx = document.getElementById("winrateChart");
-
-      this.chart = new Chart(ctx, {
+      this.chart = new Chart(document.getElementById("chart"), {
         type: "line",
         data: {
           labels: scores.map((_, i) => i + 1),
           datasets: [{
-            label: "Score Trend",
-            data: scores
+            label: "Score",
+            data: scores,
+            tension: 0.4
           }]
+        },
+        options: {
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            x: { display: false },
+            y: { display: false }
+          }
         }
       });
     },
 
     scoreClass(score) {
-      if (score >= 8) return "bg-green-200 text-green-700";
-      if (score >= 6) return "bg-yellow-200 text-yellow-700";
-      return "bg-red-200 text-red-700";
+      if (score >= 8) return "bg-green-500/20 text-green-400";
+      if (score >= 6) return "bg-yellow-500/20 text-yellow-400";
+      return "bg-red-500/20 text-red-400";
     },
 
     parseReason(r) {
@@ -148,13 +196,15 @@ Vue.createApp({
     },
 
     formatTime(ts) {
-      return new Date(ts * 1000).toLocaleString();
+      return new Date(ts * 1000).toLocaleTimeString();
     }
+
   },
 
   mounted() {
     this.loadData();
   }
+
 }).mount("#app");
 </script>
 
