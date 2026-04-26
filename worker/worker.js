@@ -84,3 +84,8 @@ Reason: ${data.reason.join(", ")}
     return new Response("Not found", { status: 404 });
   }
 };
+
+headers: {
+  "Content-Type": "application/json",
+  "Access-Control-Allow-Origin": "*"
+}
