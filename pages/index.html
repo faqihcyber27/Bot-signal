@@ -9,6 +9,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/vue@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://s3.tradingview.com/tv.js"></script>
 
 <style>
 .fade-enter-active {
@@ -57,6 +58,14 @@
 
     </div>
 
+    <!-- 🔥 TRADINGVIEW CHART -->
+    <div class="px-4 mb-4">
+      <div class="bg-gray-900 p-4 rounded-xl">
+        <p class="text-sm text-gray-400 mb-2">Live XAUUSD Chart</p>
+        <div id="tv_chart"></div>
+      </div>
+    </div>
+
     <!-- SCORE TREND -->
     <div class="px-4 mb-4">
       <div class="bg-gray-900 p-4 rounded-xl">
@@ -85,7 +94,6 @@
 
   <!-- HISTORY -->
   <div v-if="tab==='history'" class="px-4 pb-20">
-
     <transition-group name="fade">
       <div v-for="s in signals" :key="s.id"
            class="bg-gray-900 mb-3 p-3 rounded-xl">
@@ -106,17 +114,14 @@
 
       </div>
     </transition-group>
-
   </div>
 
   <!-- SETTINGS -->
   <div v-if="tab==='settings'" class="p-4">
-
     <button @click="enableNotif"
       class="bg-green-500 px-4 py-2 rounded">
       Enable Notification
     </button>
-
   </div>
 
   <!-- NAVBAR BOTTOM -->
@@ -143,7 +148,8 @@ Vue.createApp({
       equity: [],
       chart: null,
       equityChart: null,
-      pieChart: null
+      pieChart: null,
+      tvLoaded: false
     }
   },
 
@@ -159,6 +165,25 @@ Vue.createApp({
       this.calculate();
       this.renderChart();
       this.renderExtraCharts();
+
+      this.initTV(); // 🔥 load chart
+    },
+
+    initTV() {
+      if (this.tvLoaded) return;
+
+      new TradingView.widget({
+        container_id: "tv_chart",
+        symbol: "OANDA:XAUUSD",
+        interval: "5",
+        theme: "dark",
+        style: "1",
+        locale: "en",
+        height: 400,
+        width: "100%"
+      });
+
+      this.tvLoaded = true;
     },
 
     calculate() {
@@ -182,10 +207,6 @@ Vue.createApp({
         this.winrate = Math.round((wins / (wins + losses)) * 100);
       }
 
-      const total = this.signals.length;
-      const sum = this.signals.reduce((a, b) => a + b.score, 0);
-      this.avgScore = (sum / total).toFixed(1);
-
       this.profit = equity;
     },
 
@@ -198,10 +219,7 @@ Vue.createApp({
         type: "line",
         data: {
           labels: scores.map((_, i) => i + 1),
-          datasets: [{
-            data: scores,
-            tension: 0.4
-          }]
+          datasets: [{ data: scores, tension: 0.4 }]
         },
         options: {
           plugins: { legend: { display: false } },
@@ -211,23 +229,17 @@ Vue.createApp({
     },
 
     renderExtraCharts() {
-
       if (this.equityChart) this.equityChart.destroy();
       if (this.pieChart) this.pieChart.destroy();
 
-      // EQUITY
       this.equityChart = new Chart(document.getElementById("equityChart"), {
         type: "line",
         data: {
           labels: this.equity.map((_, i) => i + 1),
-          datasets: [{
-            data: this.equity,
-            tension: 0.4
-          }]
+          datasets: [{ data: this.equity }]
         }
       });
 
-      // PIE
       const win = this.signals.filter(s => s.result === "WIN").length;
       const loss = this.signals.filter(s => s.result === "LOSS").length;
 
@@ -235,9 +247,7 @@ Vue.createApp({
         type: "pie",
         data: {
           labels: ["Win", "Loss"],
-          datasets: [{
-            data: [win, loss]
-          }]
+          datasets: [{ data: [win, loss] }]
         }
       });
     },
