@@ -1,5 +1,15 @@
 export default {
   async fetch(request, env) {
+
+    // =========================
+    // CORS PREFLIGHT (WAJIB)
+    // =========================
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: corsHeaders()
+      });
+    }
+
     const url = new URL(request.url);
 
     // =========================
@@ -44,15 +54,43 @@ Reason: ${data.reason.join(", ")}
           })
         });
 
-        return new Response("OK");
+        return new Response(JSON.stringify({ status: "ok" }), {
+          headers: corsHeaders()
+        });
 
       } catch (e) {
-        return new Response("Error: " + e.message, { status: 500 });
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: corsHeaders()
+        });
       }
     }
 
     // =========================
-    // GET SIGNALS (DASHBOARD)
+    // UPDATE RESULT (WIN / LOSS)
+    // =========================
+    if (url.pathname === "/update-result" && request.method === "POST") {
+      try {
+        const { id, result } = await request.json();
+
+        await env.DB.prepare(`
+          UPDATE signals SET result = ? WHERE id = ?
+        `).bind(result, id).run();
+
+        return new Response(JSON.stringify({ status: "updated" }), {
+          headers: corsHeaders()
+        });
+
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: corsHeaders()
+        });
+      }
+    }
+
+    // =========================
+    // GET SIGNALS
     // =========================
     if (url.pathname === "/signals") {
       const data = await env.DB.prepare(`
@@ -60,7 +98,7 @@ Reason: ${data.reason.join(", ")}
       `).all();
 
       return new Response(JSON.stringify(data.results), {
-        headers: { "Content-Type": "application/json" }
+        headers: corsHeaders()
       });
     }
 
@@ -68,24 +106,55 @@ Reason: ${data.reason.join(", ")}
     // GET STATS
     // =========================
     if (url.pathname === "/stats") {
-      const total = await env.DB.prepare(`SELECT COUNT(*) as total FROM signals`).first();
-      const buy = await env.DB.prepare(`SELECT COUNT(*) as buy FROM signals WHERE type='BUY'`).first();
-      const sell = await env.DB.prepare(`SELECT COUNT(*) as sell FROM signals WHERE type='SELL'`).first();
+      const total = await env.DB.prepare(`
+        SELECT COUNT(*) as total FROM signals
+      `).first();
+
+      const buy = await env.DB.prepare(`
+        SELECT COUNT(*) as buy FROM signals WHERE type='BUY'
+      `).first();
+
+      const sell = await env.DB.prepare(`
+        SELECT COUNT(*) as sell FROM signals WHERE type='SELL'
+      `).first();
+
+      const win = await env.DB.prepare(`
+        SELECT COUNT(*) as win FROM signals WHERE result='WIN'
+      `).first();
+
+      const loss = await env.DB.prepare(`
+        SELECT COUNT(*) as loss FROM signals WHERE result='LOSS'
+      `).first();
 
       return new Response(JSON.stringify({
         total: total.total,
         buy: buy.buy,
-        sell: sell.sell
+        sell: sell.sell,
+        win: win.win,
+        loss: loss.loss
       }), {
-        headers: { "Content-Type": "application/json" }
+        headers: corsHeaders()
       });
     }
 
-    return new Response("Not found", { status: 404 });
+    // =========================
+    // DEFAULT
+    // =========================
+    return new Response("Not Found", {
+      status: 404,
+      headers: corsHeaders()
+    });
   }
 };
 
-headers: {
-  "Content-Type": "application/json",
-  "Access-Control-Allow-Origin": "*"
+// =========================
+// CORS HELPER
+// =========================
+function corsHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
 }
