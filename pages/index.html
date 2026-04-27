@@ -16,7 +16,6 @@
 
 <div id="app" class="max-w-md mx-auto">
 
-<!-- NAVBAR -->
 <div class="sticky top-0 bg-[#111827] p-4 flex justify-between">
   <h1 class="font-bold">📊 Trading Dashboard</h1>
   <button @click="loadData" class="bg-blue-600 px-3 py-1 rounded text-sm">
@@ -24,7 +23,6 @@
   </button>
 </div>
 
-<!-- STATS -->
 <div class="p-4 grid grid-cols-2 gap-3 text-sm">
 
   <div class="bg-[#111827] p-3 rounded text-center">
@@ -53,7 +51,6 @@
 
 </div>
 
-<!-- ACCOUNT -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-4 rounded text-sm">
     💰 {{ account.balance || 0 }} <br>
@@ -62,7 +59,6 @@
   </div>
 </div>
 
-<!-- SESSION -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-4 rounded text-sm">
     <b>🧠 Session</b><br>
@@ -72,18 +68,15 @@
   </div>
 </div>
 
-<!-- TRADINGVIEW -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-2 rounded">
     <div id="tv_chart"></div>
   </div>
 </div>
 
-<!-- EQUITY -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-2 rounded relative">
     <canvas id="equityChart"></canvas>
-
     <div v-if="equity.length === 0"
       class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
       No trade data
@@ -91,11 +84,9 @@
   </div>
 </div>
 
-<!-- DD -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-2 rounded relative">
     <canvas id="ddChart"></canvas>
-
     <div v-if="drawdown.length === 0"
       class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
       No drawdown data
@@ -139,14 +130,16 @@ async loadData(){
   try{
     const c = await fetch(API+"/closes");
     this.closes = await c.json();
-  }catch{
+  }catch(e){
+    console.log("closes error", e);
     this.closes = [];
   }
 
   try{
     const acc = await fetch(API+"/account");
     this.account = await acc.json();
-  }catch{
+  }catch(e){
+    console.log("account error", e);
     this.account = {};
   }
 
@@ -157,14 +150,14 @@ async loadData(){
 
 calculate(){
 
-  let equity = 0;
-  let peak = 0;
-  let maxDD = 0;
+  var equity = 0;
+  var peak = 0;
+  var maxDD = 0;
 
-  let wins = 0;
-  let losses = 0;
-  let grossWin = 0;
-  let grossLoss = 0;
+  var wins = 0;
+  var losses = 0;
+  var grossWin = 0;
+  var grossLoss = 0;
 
   this.equity = [];
   this.drawdown = [];
@@ -175,34 +168,38 @@ calculate(){
     NEWYORK:{win:0,loss:0}
   };
 
-  this.closes.forEach(t => {
+  for(var i=0;i<this.closes.length;i++){
 
-    let p = t.profit || 0;
-    let session = t.session || "UNKNOWN";
+    var t = this.closes[i];
+    var p = t.profit || 0;
+    var session = t.session || "UNKNOWN";
 
     equity += p;
 
     if(p > 0){
       wins++;
       grossWin += p;
-      this.sessionStats[session]?.win++;
+      if(this.sessionStats[session]){
+        this.sessionStats[session].win++;
+      }
     } else {
       losses++;
       grossLoss += Math.abs(p);
-      this.sessionStats[session]?.loss++;
+      if(this.sessionStats[session]){
+        this.sessionStats[session].loss++;
+      }
     }
 
-    peak = Math.max(peak, equity);
-    let dd = peak - equity;
+    if(equity > peak) peak = equity;
 
-    maxDD = Math.max(maxDD, dd);
+    var dd = peak - equity;
+    if(dd > maxDD) maxDD = dd;
 
     this.equity.push(equity);
     this.drawdown.push(dd);
+  }
 
-  });
-
-  this.winrate = wins+losses>0 ? Math.round((wins/(wins+losses))*100) : 0;
+  this.winrate = (wins+losses)>0 ? Math.round((wins/(wins+losses))*100) : 0;
   this.profit = equity.toFixed(2);
   this.maxDD = maxDD.toFixed(2);
   this.profitFactor = grossLoss>0 ? (grossWin/grossLoss).toFixed(2) : "-";
@@ -213,8 +210,8 @@ renderCharts(){
 
   try{
 
-    const eq = document.getElementById("equityChart");
-    const dd = document.getElementById("ddChart");
+    var eq = document.getElementById("equityChart");
+    var dd = document.getElementById("ddChart");
 
     if(!eq || !dd) return;
 
@@ -224,7 +221,7 @@ renderCharts(){
     this.equityChart = new Chart(eq,{
       type:"line",
       data:{
-        labels:this.equity.map((_,i)=>i),
+        labels:this.equity.map(function(_,i){ return i }),
         datasets:[{
           data:this.equity,
           borderColor:"#00ff99",
@@ -236,7 +233,7 @@ renderCharts(){
     this.ddChart = new Chart(dd,{
       type:"line",
       data:{
-        labels:this.drawdown.map((_,i)=>i),
+        labels:this.drawdown.map(function(_,i){ return i }),
         datasets:[{
           data:this.drawdown,
           borderColor:"#ff4d4d",
@@ -246,30 +243,33 @@ renderCharts(){
     });
 
   }catch(e){
-    console.log("Chart error:", e);
+    console.log("chart error", e);
   }
 },
 
 initTV(){
   if(this.tvLoaded) return;
 
-  new TradingView.widget({
-    container_id:"tv_chart",
-    symbol:"OANDA:XAUUSD",
-    interval:"5",
-    theme:"dark",
-    height:350,
-    width:"100%"
-  });
-
-  this.tvLoaded = true;
+  try{
+    new TradingView.widget({
+      container_id:"tv_chart",
+      symbol:"OANDA:XAUUSD",
+      interval:"5",
+      theme:"dark",
+      height:350,
+      width:"100%"
+    });
+    this.tvLoaded = true;
+  }catch(e){
+    console.log("tv error", e);
+  }
 }
 
 },
 
 mounted(){
   this.loadData();
-  setInterval(()=>this.loadData(),10000);
+  setInterval(this.loadData,10000);
 }
 
 });
