@@ -6,13 +6,10 @@
 <title>XAU Bot Pro</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/vue@3"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-<!-- 🔥 IMPORTANT: TIME ADAPTER -->
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-
-<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="https://unpkg.com/vue@3" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+<script src="https://s3.tradingview.com/tv.js" defer></script>
 
 </head>
 
@@ -21,7 +18,7 @@
 <div id="app" class="max-w-md mx-auto">
 
 <!-- NAVBAR -->
-<div class="sticky top-0 bg-[#111827] p-4 flex justify-between shadow">
+<div class="sticky top-0 bg-[#111827] p-4 flex justify-between">
   <h1 class="font-bold text-lg">📊 Trading Dashboard</h1>
   <button @click="loadData" class="bg-blue-600 px-3 py-1 rounded text-sm">
     Refresh
@@ -60,9 +57,9 @@
 <!-- ACCOUNT -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-4 rounded text-sm">
-    💰 {{ account.balance }} <br>
-    📊 {{ account.equity }} <br>
-    📉 {{ account.profit }}
+    💰 {{ account.balance || 0 }} <br>
+    📊 {{ account.equity || 0 }} <br>
+    📉 {{ account.profit || 0 }}
   </div>
 </div>
 
@@ -70,7 +67,7 @@
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-4 rounded text-sm">
     <b>🧠 Session</b><br>
-    <div v-for="(v,k) in sessionStats">
+    <div v-for="(v,k) in sessionStats" :key="k">
       {{k}} → {{v.win}} / {{v.loss}}
     </div>
   </div>
@@ -86,37 +83,36 @@
 <!-- EQUITY -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-2 rounded relative">
-
     <canvas id="equityChart"></canvas>
 
     <div v-if="equity.length === 0"
-         class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
+      class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
       No trade data
     </div>
-
   </div>
 </div>
 
 <!-- DD -->
 <div class="px-4 mb-4">
   <div class="bg-[#111827] p-2 rounded relative">
-
     <canvas id="ddChart"></canvas>
 
     <div v-if="drawdown.length === 0"
-         class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
+      class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
       No drawdown data
     </div>
-
   </div>
 </div>
 
 </div>
 
-<script>
+<script defer>
+window.addEventListener("load", () => {
+
 const API = "https://worker-bot.jihadwajib68.workers.dev";
 
 Vue.createApp({
+
 data(){
   return{
     closes:[],
@@ -128,7 +124,11 @@ data(){
     maxDD:0,
     profitFactor:0,
     avgProfit:0,
-    sessionStats:{},
+    sessionStats:{
+      ASIA:{win:0,loss:0},
+      LONDON:{win:0,loss:0},
+      NEWYORK:{win:0,loss:0}
+    },
     equityChart:null,
     ddChart:null,
     tvLoaded:false
@@ -204,8 +204,8 @@ calculate(){
 
     maxDD = Math.max(maxDD, dd);
 
-    this.equity.push({ x:new Date(t.time*1000), y:equity });
-    this.drawdown.push({ x:new Date(t.time*1000), y:dd });
+    this.equity.push(equity);
+    this.drawdown.push(dd);
 
   });
 
@@ -218,55 +218,45 @@ calculate(){
 
 renderCharts(){
 
-  const eq = document.getElementById("equityChart");
-  const dd = document.getElementById("ddChart");
+  try{
 
-  if(!eq || !dd) return;
+    const eq = document.getElementById("equityChart");
+    const dd = document.getElementById("ddChart");
 
-  if(this.equityChart) this.equityChart.destroy();
-  if(this.ddChart) this.ddChart.destroy();
+    if(!eq || !dd) return;
 
-  this.equityChart = new Chart(eq,{
-    type:"line",
-    data:{
-      datasets:[{
-        data:this.equity,
-        borderColor:"#00ff99",
-        borderWidth:2,
-        tension:0.3,
-        pointRadius:0
-      }]
-    },
-    options:{
-      parsing:false,
-      plugins:{legend:{display:false}},
-      scales:{
-        x:{type:"time", grid:{color:"#222"}},
-        y:{grid:{color:"#222"}}
-      }
-    }
-  });
+    if(this.equityChart) this.equityChart.destroy();
+    if(this.ddChart) this.ddChart.destroy();
 
-  this.ddChart = new Chart(dd,{
-    type:"line",
-    data:{
-      datasets:[{
-        data:this.drawdown,
-        borderColor:"#ff4d4d",
-        borderWidth:2,
-        tension:0.3,
-        pointRadius:0
-      }]
-    },
-    options:{
-      parsing:false,
-      plugins:{legend:{display:false}},
-      scales:{
-        x:{type:"time", grid:{color:"#222"}},
-        y:{grid:{color:"#222"}}
-      }
-    }
-  });
+    this.equityChart = new Chart(eq,{
+      type:"line",
+      data:{
+        labels:this.equity.map((_,i)=>i),
+        datasets:[{
+          data:this.equity,
+          borderColor:"#00ff99",
+          tension:0.3
+        }]
+      },
+      options:{plugins:{legend:{display:false}}}
+    });
+
+    this.ddChart = new Chart(dd,{
+      type:"line",
+      data:{
+        labels:this.drawdown.map((_,i)=>i),
+        datasets:[{
+          data:this.drawdown,
+          borderColor:"#ff4d4d",
+          tension:0.3
+        }]
+      },
+      options:{plugins:{legend:{display:false}}}
+    });
+
+  }catch(e){
+    console.log("Chart error:", e);
+  }
 },
 
 initTV(){
@@ -292,6 +282,8 @@ mounted(){
 }
 
 }).mount("#app");
+
+});
 </script>
 
 </body>
