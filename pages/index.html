@@ -115,7 +115,8 @@ data(){
     sessionStats:{
       ASIA:{win:0,loss:0},
       LONDON:{win:0,loss:0},
-      NEWYORK:{win:0,loss:0}
+      NEWYORK:{win:0,loss:0},
+      UNKNOWN:{win:0,loss:0} // 🔥 FIX
     },
     equityChart:null,
     ddChart:null,
@@ -130,6 +131,10 @@ async loadData(){
   try{
     const c = await fetch(API+"/closes");
     this.closes = await c.json();
+
+    // 🔥 FIX: urutan biar timeline benar
+    this.closes.reverse();
+
   }catch(e){
     console.log("closes error", e);
     this.closes = [];
@@ -165,7 +170,8 @@ calculate(){
   this.sessionStats = {
     ASIA:{win:0,loss:0},
     LONDON:{win:0,loss:0},
-    NEWYORK:{win:0,loss:0}
+    NEWYORK:{win:0,loss:0},
+    UNKNOWN:{win:0,loss:0}
   };
 
   for(var i=0;i<this.closes.length;i++){
@@ -179,15 +185,11 @@ calculate(){
     if(p > 0){
       wins++;
       grossWin += p;
-      if(this.sessionStats[session]){
-        this.sessionStats[session].win++;
-      }
+      this.sessionStats[session].win++;
     } else {
       losses++;
       grossLoss += Math.abs(p);
-      if(this.sessionStats[session]){
-        this.sessionStats[session].loss++;
-      }
+      this.sessionStats[session].loss++;
     }
 
     if(equity > peak) peak = equity;
@@ -202,8 +204,15 @@ calculate(){
   this.winrate = (wins+losses)>0 ? Math.round((wins/(wins+losses))*100) : 0;
   this.profit = equity.toFixed(2);
   this.maxDD = maxDD.toFixed(2);
-  this.profitFactor = grossLoss>0 ? (grossWin/grossLoss).toFixed(2) : "-";
-  this.avgProfit = this.closes.length>0 ? (equity/this.closes.length).toFixed(2) : 0;
+
+  // 🔥 FIX PROFIT FACTOR
+  this.profitFactor = grossLoss > 0
+    ? (grossWin/grossLoss).toFixed(2)
+    : (grossWin > 0 ? "∞" : "-");
+
+  this.avgProfit = this.closes.length>0
+    ? (equity/this.closes.length).toFixed(2)
+    : 0;
 },
 
 renderCharts(){
@@ -221,7 +230,9 @@ renderCharts(){
     this.equityChart = new Chart(eq,{
       type:"line",
       data:{
-        labels:this.equity.map(function(_,i){ return i }),
+        labels:this.closes.map(function(t){
+          return new Date(t.time).toLocaleTimeString(); // 🔥 FIX TIME
+        }),
         datasets:[{
           data:this.equity,
           borderColor:"#00ff99",
@@ -233,7 +244,9 @@ renderCharts(){
     this.ddChart = new Chart(dd,{
       type:"line",
       data:{
-        labels:this.drawdown.map(function(_,i){ return i }),
+        labels:this.closes.map(function(t){
+          return new Date(t.time).toLocaleTimeString();
+        }),
         datasets:[{
           data:this.drawdown,
           borderColor:"#ff4d4d",
