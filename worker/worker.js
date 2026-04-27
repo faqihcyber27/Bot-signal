@@ -12,22 +12,22 @@ export default {
     // =========================
     if (url.pathname === "/signal" && request.method === "POST") {
       try {
-        const data = await request.json();
+        const d = await request.json();
 
-        if (!data.type || !data.entry) {
-          return json({ error: "invalid" }, 400);
+        if (!d.type || typeof d.entry !== "number") {
+          return json({ error: "invalid signal" }, 400);
         }
 
         const result = await env.DB.prepare(`
           INSERT INTO signals (type, entry, sl, tp, score, timestamp)
           VALUES (?, ?, ?, ?, ?, ?)
         `).bind(
-          data.type,
-          data.entry,
-          data.sl || 0,
-          data.tp || 0,
-          data.score || 0,
-          data.timestamp || Date.now()
+          d.type,
+          d.entry,
+          d.sl || 0,
+          d.tp || 0,
+          d.score || 0,
+          d.timestamp || Date.now()
         ).run();
 
         return json({ status: "ok", id: result.meta.last_row_id });
@@ -42,16 +42,20 @@ export default {
     // =========================
     if (url.pathname === "/account" && request.method === "POST") {
       try {
-        const data = await request.json();
+        const d = await request.json();
+
+        if (typeof d.balance !== "number") {
+          return json({ error: "invalid account" }, 400);
+        }
 
         await env.DB.prepare(`
           INSERT INTO account (balance, equity, profit, timestamp)
           VALUES (?, ?, ?, ?)
         `).bind(
-          data.balance || 0,
-          data.equity || 0,
-          data.profit || 0,
-          data.timestamp || Date.now()
+          d.balance,
+          d.equity || 0,
+          d.profit || 0,
+          d.timestamp || Date.now()
         ).run();
 
         return json({ status: "ok" });
@@ -64,7 +68,7 @@ export default {
     // =========================
     // ACCOUNT (GET)
     // =========================
-    if (url.pathname === "/account" && request.method === "GET") {
+    if (url.pathname === "/account") {
       const data = await env.DB.prepare(`
         SELECT * FROM account ORDER BY id DESC LIMIT 1
       `).first();
@@ -79,7 +83,11 @@ export default {
       try {
         const d = await request.json();
 
-        await env.DB.prepare(`
+        if (!d.type || typeof d.entry !== "number") {
+          return json({ error: "invalid trade" }, 400);
+        }
+
+        const result = await env.DB.prepare(`
           INSERT INTO trades (type, entry, sl, tp, prob, timestamp)
           VALUES (?, ?, ?, ?, ?, ?)
         `).bind(
@@ -91,7 +99,10 @@ export default {
           d.time || Date.now()
         ).run();
 
-        return json({ status: "ok" });
+        return json({
+          status: "ok",
+          trade_id: result.meta.last_row_id
+        });
 
       } catch (e) {
         return json({ error: e.message }, 500);
@@ -99,17 +110,22 @@ export default {
     }
 
     // =========================
-    // CLOSE TRADE
+    // CLOSE TRADE (FIXED)
     // =========================
     if (url.pathname === "/close" && request.method === "POST") {
       try {
         const d = await request.json();
 
+        if (typeof d.profit !== "number") {
+          return json({ error: "invalid profit" }, 400);
+        }
+
         await env.DB.prepare(`
-          INSERT INTO closes (profit, session, timestamp)
-          VALUES (?, ?, ?)
+          INSERT INTO closes (trade_id, profit, session, timestamp)
+          VALUES (?, ?, ?, ?)
         `).bind(
-          d.profit || 0,
+          d.trade_id || null,
+          d.profit,
           d.session || "UNKNOWN",
           d.time || Date.now()
         ).run();
@@ -122,9 +138,9 @@ export default {
     }
 
     // =========================
-    // 🔥 GET CLOSES (UNTUK DASHBOARD)
+    // GET CLOSES (DASHBOARD)
     // =========================
-    if (url.pathname === "/closes" && request.method === "GET") {
+    if (url.pathname === "/closes") {
       const data = await env.DB.prepare(`
         SELECT 
           profit,
@@ -141,7 +157,7 @@ export default {
     // =========================
     // GET TRADES
     // =========================
-    if (url.pathname === "/trades" && request.method === "GET") {
+    if (url.pathname === "/trades") {
       const data = await env.DB.prepare(`
         SELECT * FROM trades ORDER BY id DESC LIMIT 100
       `).all();
@@ -150,7 +166,7 @@ export default {
     }
 
     // =========================
-    // STATS
+    // STATS (IMPROVED)
     // =========================
     if (url.pathname === "/stats") {
 
@@ -179,14 +195,18 @@ export default {
     }
 
     // =========================
-    // FALLBACK
+    // HEALTH CHECK
     // =========================
+    if (url.pathname === "/health") {
+      return json({ status: "ok", time: Date.now() });
+    }
+
     return json({ error: "Not found" }, 404);
   }
 };
 
 // =========================
-// HELPER
+// HELPERS
 // =========================
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
