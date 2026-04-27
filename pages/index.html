@@ -3,13 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XAU Bot Pro</title>
+<title>XAU Bot Dashboard</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
-
-<script src="https://unpkg.com/vue@3" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
-<script src="https://s3.tradingview.com/tv.js" defer></script>
+<script src="https://unpkg.com/vue@3"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://s3.tradingview.com/tv.js"></script>
 
 </head>
 
@@ -19,7 +18,7 @@
 
 <!-- NAVBAR -->
 <div class="sticky top-0 bg-[#111827] p-4 flex justify-between">
-  <h1 class="font-bold text-lg">📊 Trading Dashboard</h1>
+  <h1 class="font-bold">📊 Trading Dashboard</h1>
   <button @click="loadData" class="bg-blue-600 px-3 py-1 rounded text-sm">
     Refresh
   </button>
@@ -106,12 +105,10 @@
 
 </div>
 
-<script defer>
-window.addEventListener("load", () => {
-
+<script>
 const API = "https://worker-bot.jihadwajib68.workers.dev";
 
-Vue.createApp({
+const app = Vue.createApp({
 
 data(){
   return{
@@ -154,11 +151,7 @@ async loadData(){
   }
 
   this.calculate();
-
-  this.$nextTick(()=>{
-    this.renderCharts();
-  });
-
+  this.renderCharts();
   this.initTV();
 },
 
@@ -237,8 +230,7 @@ renderCharts(){
           borderColor:"#00ff99",
           tension:0.3
         }]
-      },
-      options:{plugins:{legend:{display:false}}}
+      }
     });
 
     this.ddChart = new Chart(dd,{
@@ -250,8 +242,7 @@ renderCharts(){
           borderColor:"#ff4d4d",
           tension:0.3
         }]
-      },
-      options:{plugins:{legend:{display:false}}}
+      }
     });
 
   }catch(e){
@@ -281,9 +272,9 @@ mounted(){
   setInterval(()=>this.loadData(),10000);
 }
 
-}).mount("#app");
-
 });
+
+app.mount("#app");
 </script>
 
 </body>
