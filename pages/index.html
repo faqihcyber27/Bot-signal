@@ -3,14 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <title>XAU Bot Pro</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/vue@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://s3.tradingview.com/tv.js"></script>
-
 </head>
 
 <body class="bg-gray-950 text-white">
@@ -19,7 +17,7 @@
 
 <!-- NAVBAR -->
 <div class="sticky top-0 bg-gray-900 p-4 flex justify-between">
-  <h1 class="font-bold">📊 Dashboard Tradingt</h1>
+  <h1 class="font-bold">📊 Trading Dashboard</h1>
   <button @click="loadData" class="bg-blue-500 px-3 py-1 rounded text-sm">
     Refresh
   </button>
@@ -30,7 +28,7 @@
 
   <div class="bg-gray-800 p-3 rounded text-center">
     <p class="text-xs">Trades</p>
-    <p class="font-bold">{{ stats.total }}</p>
+    <p class="font-bold">{{ closes.length }}</p>
   </div>
 
   <div class="bg-green-500/20 p-3 rounded text-center">
@@ -69,7 +67,17 @@
   </div>
 </div>
 
-<!-- TV -->
+<!-- SESSION STATS -->
+<div class="px-4 mb-4">
+  <div class="bg-gray-900 p-4 rounded">
+    <h2 class="font-bold mb-2">🧠 Session Performance</h2>
+    <div v-for="(v,k) in sessionStats" :key="k">
+      {{k}} → Win: {{v.win}} | Loss: {{v.loss}}
+    </div>
+  </div>
+</div>
+
+<!-- TRADINGVIEW -->
 <div class="px-4 mb-4">
   <div class="bg-gray-900 p-4 rounded">
     <div id="tv_chart"></div>
@@ -98,9 +106,7 @@ const API = "https://worker-bot.jihadwajib68.workers.dev";
 Vue.createApp({
 data(){
   return{
-    trades:[],
     closes:[],
-    stats:{},
     account:{},
     equity:[],
     drawdown:[],
@@ -109,6 +115,7 @@ data(){
     maxDD:0,
     profitFactor:0,
     avgProfit:0,
+    sessionStats:{},
     equityChart:null,
     ddChart:null,
     tvLoaded:false
@@ -118,19 +125,15 @@ data(){
 methods:{
 
 async loadData(){
+  try{
+    const c = await fetch(API+"/closes");
+    this.closes = await c.json();
+  }catch{ this.closes = [] }
 
-  // 🔥 FIX: pakai endpoint benar
-  const t = await fetch(API+"/trades");
-  this.trades = await t.json();
-
-  const c = await fetch(API+"/stats");
-  this.stats = await c.json();
-
-  const acc = await fetch(API+"/account");
-  this.account = await acc.json();
-
-  const closeRes = await fetch(API+"/trades"); // fallback
-  this.closes = await closeRes.json();
+  try{
+    const acc = await fetch(API+"/account");
+    this.account = await acc.json();
+  }catch{ this.account = {} }
 
   this.calculate();
   this.renderCharts();
@@ -143,8 +146,8 @@ calculate(){
   let peak = 0;
   let maxDD = 0;
 
-  let wins = this.stats.win || 0;
-  let losses = this.stats.loss || 0;
+  let wins = 0;
+  let losses = 0;
 
   let grossWin = 0;
   let grossLoss = 0;
@@ -152,23 +155,43 @@ calculate(){
   this.equity = [];
   this.drawdown = [];
 
-  // 🔥 REAL: pakai profit real dari closes
+  this.sessionStats = {
+    ASIA:{win:0,loss:0},
+    LONDON:{win:0,loss:0},
+    NEWYORK:{win:0,loss:0}
+  };
+
   this.closes.forEach(t => {
 
     let p = t.profit || 0;
+    let session = t.session || "UNKNOWN";
 
     equity += p;
 
-    if(p > 0) grossWin += p;
-    else grossLoss += Math.abs(p);
+    if(p > 0){
+      wins++;
+      grossWin += p;
+      if(this.sessionStats[session]) this.sessionStats[session].win++;
+    }else{
+      losses++;
+      grossLoss += Math.abs(p);
+      if(this.sessionStats[session]) this.sessionStats[session].loss++;
+    }
 
     peak = Math.max(peak, equity);
     let dd = peak - equity;
 
     maxDD = Math.max(maxDD, dd);
 
-    this.equity.push(equity);
-    this.drawdown.push(dd);
+    this.equity.push({
+      x: new Date(t.time * 1000),
+      y: equity
+    });
+
+    this.drawdown.push({
+      x: new Date(t.time * 1000),
+      y: dd
+    });
 
   });
 
@@ -181,7 +204,7 @@ calculate(){
 
   this.profitFactor = grossLoss > 0
     ? (grossWin/grossLoss).toFixed(2)
-    : "∞";
+    : "-";
 
   this.avgProfit = this.closes.length > 0
     ? (equity / this.closes.length).toFixed(2)
@@ -198,8 +221,15 @@ renderCharts(){
     {
       type:"line",
       data:{
-        labels:this.equity.map((_,i)=>i),
-        datasets:[{data:this.equity}]
+        datasets:[{
+          data:this.equity
+        }]
+      },
+      options:{
+        parsing:false,
+        scales:{
+          x:{type:"time"}
+        }
       }
     }
   );
@@ -209,8 +239,15 @@ renderCharts(){
     {
       type:"line",
       data:{
-        labels:this.drawdown.map((_,i)=>i),
-        datasets:[{data:this.drawdown}]
+        datasets:[{
+          data:this.drawdown
+        }]
+      },
+      options:{
+        parsing:false,
+        scales:{
+          x:{type:"time"}
+        }
       }
     }
   );
