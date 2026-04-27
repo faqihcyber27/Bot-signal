@@ -24,8 +24,8 @@ export default {
         `).bind(
           data.type,
           data.entry,
-          data.sl,
-          data.tp,
+          data.sl || 0,
+          data.tp || 0,
           data.score || 0,
           data.timestamp || Date.now()
         ).run();
@@ -38,7 +38,7 @@ export default {
     }
 
     // =========================
-    // 🔥 ACCOUNT (INI YANG LO BUTUH)
+    // ACCOUNT (POST)
     // =========================
     if (url.pathname === "/account" && request.method === "POST") {
       try {
@@ -48,10 +48,10 @@ export default {
           INSERT INTO account (balance, equity, profit, timestamp)
           VALUES (?, ?, ?, ?)
         `).bind(
-          data.balance,
-          data.equity,
-          data.profit,
-          data.timestamp
+          data.balance || 0,
+          data.equity || 0,
+          data.profit || 0,
+          data.timestamp || Date.now()
         ).run();
 
         return json({ status: "ok" });
@@ -62,7 +62,18 @@ export default {
     }
 
     // =========================
-    // 🔥 TRADE LOG
+    // ACCOUNT (GET)
+    // =========================
+    if (url.pathname === "/account" && request.method === "GET") {
+      const data = await env.DB.prepare(`
+        SELECT * FROM account ORDER BY id DESC LIMIT 1
+      `).first();
+
+      return json(data || {});
+    }
+
+    // =========================
+    // TRADE OPEN
     // =========================
     if (url.pathname === "/trade" && request.method === "POST") {
       try {
@@ -74,10 +85,10 @@ export default {
         `).bind(
           d.type,
           d.entry,
-          d.sl,
-          d.tp,
-          d.prob,
-          d.time
+          d.sl || 0,
+          d.tp || 0,
+          d.prob || 0,
+          d.time || Date.now()
         ).run();
 
         return json({ status: "ok" });
@@ -88,18 +99,19 @@ export default {
     }
 
     // =========================
-    // 🔥 CLOSE LOG
+    // CLOSE TRADE
     // =========================
     if (url.pathname === "/close" && request.method === "POST") {
       try {
         const d = await request.json();
 
         await env.DB.prepare(`
-          INSERT INTO closes (profit, timestamp)
-          VALUES (?, ?)
+          INSERT INTO closes (profit, session, timestamp)
+          VALUES (?, ?, ?)
         `).bind(
-          d.profit,
-          Date.now()
+          d.profit || 0,
+          d.session || "UNKNOWN",
+          d.time || Date.now()
         ).run();
 
         return json({ status: "ok" });
@@ -110,42 +122,65 @@ export default {
     }
 
     // =========================
-    // GET ACCOUNT (UNTUK DASHBOARD)
+    // 🔥 GET CLOSES (UNTUK DASHBOARD)
     // =========================
-    if (url.pathname === "/account") {
+    if (url.pathname === "/closes" && request.method === "GET") {
       const data = await env.DB.prepare(`
-        SELECT * FROM account ORDER BY id DESC LIMIT 1
-      `).first();
+        SELECT 
+          profit,
+          timestamp as time,
+          session
+        FROM closes
+        ORDER BY id DESC
+        LIMIT 200
+      `).all();
 
-      return json(data || {});
+      return json(data.results || []);
     }
 
     // =========================
     // GET TRADES
     // =========================
-    if (url.pathname === "/trades") {
+    if (url.pathname === "/trades" && request.method === "GET") {
       const data = await env.DB.prepare(`
-        SELECT * FROM trades ORDER BY id DESC LIMIT 50
+        SELECT * FROM trades ORDER BY id DESC LIMIT 100
       `).all();
 
-      return json(data.results);
+      return json(data.results || []);
     }
 
     // =========================
     // STATS
     // =========================
     if (url.pathname === "/stats") {
-      const total = await env.DB.prepare(`SELECT COUNT(*) as total FROM trades`).first();
-      const win = await env.DB.prepare(`SELECT COUNT(*) as win FROM closes WHERE profit > 0`).first();
-      const loss = await env.DB.prepare(`SELECT COUNT(*) as loss FROM closes WHERE profit <= 0`).first();
+
+      const total = await env.DB.prepare(`
+        SELECT COUNT(*) as total FROM trades
+      `).first();
+
+      const win = await env.DB.prepare(`
+        SELECT COUNT(*) as win FROM closes WHERE profit > 0
+      `).first();
+
+      const loss = await env.DB.prepare(`
+        SELECT COUNT(*) as loss FROM closes WHERE profit <= 0
+      `).first();
+
+      const profit = await env.DB.prepare(`
+        SELECT SUM(profit) as total_profit FROM closes
+      `).first();
 
       return json({
-        total: total.total,
-        win: win.win,
-        loss: loss.loss
+        total: total.total || 0,
+        win: win.win || 0,
+        loss: loss.loss || 0,
+        profit: profit.total_profit || 0
       });
     }
 
+    // =========================
+    // FALLBACK
+    // =========================
     return json({ error: "Not found" }, 404);
   }
 };
