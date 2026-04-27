@@ -8,93 +8,106 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/vue@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- 🔥 IMPORTANT: TIME ADAPTER -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
 <script src="https://s3.tradingview.com/tv.js"></script>
+
 </head>
 
-<body class="bg-gray-950 text-white">
+<body class="bg-[#0b0f1a] text-white">
 
 <div id="app" class="max-w-md mx-auto">
 
 <!-- NAVBAR -->
-<div class="sticky top-0 bg-gray-900 p-4 flex justify-between">
-  <h1 class="font-bold">📊 Trading Dashboard</h1>
-  <button @click="loadData" class="bg-blue-500 px-3 py-1 rounded text-sm">
+<div class="sticky top-0 bg-[#111827] p-4 flex justify-between shadow">
+  <h1 class="font-bold text-lg">📊 Trading Dashboard</h1>
+  <button @click="loadData" class="bg-blue-600 px-3 py-1 rounded text-sm">
     Refresh
   </button>
 </div>
 
 <!-- STATS -->
-<div class="p-4 grid grid-cols-2 gap-3">
+<div class="p-4 grid grid-cols-2 gap-3 text-sm">
 
-  <div class="bg-gray-800 p-3 rounded text-center">
-    <p class="text-xs">Trades</p>
-    <p class="font-bold">{{ closes.length }}</p>
+  <div class="bg-[#111827] p-3 rounded text-center">
+    Trades <br><b>{{ closes.length }}</b>
   </div>
 
-  <div class="bg-green-500/20 p-3 rounded text-center">
-    <p class="text-xs">Winrate</p>
-    <p class="text-green-400 font-bold">{{ winrate }}%</p>
+  <div class="bg-green-500/10 p-3 rounded text-center text-green-400">
+    Winrate <br><b>{{ winrate }}%</b>
   </div>
 
-  <div class="bg-blue-500/20 p-3 rounded text-center">
-    <p class="text-xs">Profit</p>
-    <p class="text-blue-400 font-bold">{{ profit }}</p>
+  <div class="bg-blue-500/10 p-3 rounded text-center text-blue-400">
+    Profit <br><b>{{ profit }}</b>
   </div>
 
-  <div class="bg-red-500/20 p-3 rounded text-center">
-    <p class="text-xs">Max DD</p>
-    <p class="text-red-400 font-bold">{{ maxDD }}</p>
+  <div class="bg-red-500/10 p-3 rounded text-center text-red-400">
+    Max DD <br><b>{{ maxDD }}</b>
   </div>
 
-  <div class="bg-yellow-500/20 p-3 rounded text-center">
-    <p class="text-xs">Profit Factor</p>
-    <p class="text-yellow-400 font-bold">{{ profitFactor }}</p>
+  <div class="bg-yellow-500/10 p-3 rounded text-center text-yellow-400">
+    PF <br><b>{{ profitFactor }}</b>
   </div>
 
-  <div class="bg-purple-500/20 p-3 rounded text-center">
-    <p class="text-xs">Avg Profit</p>
-    <p class="text-purple-400 font-bold">{{ avgProfit }}</p>
+  <div class="bg-purple-500/10 p-3 rounded text-center text-purple-400">
+    Avg <br><b>{{ avgProfit }}</b>
   </div>
 
 </div>
 
 <!-- ACCOUNT -->
 <div class="px-4 mb-4">
-  <div class="bg-gray-900 p-4 rounded">
-    💰 Balance: {{ account.balance }} <br>
-    📊 Equity: {{ account.equity }} <br>
-    📉 Floating: {{ account.profit }}
+  <div class="bg-[#111827] p-4 rounded text-sm">
+    💰 {{ account.balance }} <br>
+    📊 {{ account.equity }} <br>
+    📉 {{ account.profit }}
   </div>
 </div>
 
-<!-- SESSION STATS -->
+<!-- SESSION -->
 <div class="px-4 mb-4">
-  <div class="bg-gray-900 p-4 rounded">
-    <h2 class="font-bold mb-2">🧠 Session Performance</h2>
-    <div v-for="(v,k) in sessionStats" :key="k">
-      {{k}} → Win: {{v.win}} | Loss: {{v.loss}}
+  <div class="bg-[#111827] p-4 rounded text-sm">
+    <b>🧠 Session</b><br>
+    <div v-for="(v,k) in sessionStats">
+      {{k}} → {{v.win}} / {{v.loss}}
     </div>
   </div>
 </div>
 
 <!-- TRADINGVIEW -->
 <div class="px-4 mb-4">
-  <div class="bg-gray-900 p-4 rounded">
+  <div class="bg-[#111827] p-2 rounded">
     <div id="tv_chart"></div>
   </div>
 </div>
 
 <!-- EQUITY -->
 <div class="px-4 mb-4">
-  <div class="bg-gray-900 p-4 rounded">
+  <div class="bg-[#111827] p-2 rounded relative">
+
     <canvas id="equityChart"></canvas>
+
+    <div v-if="equity.length === 0"
+         class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
+      No trade data
+    </div>
+
   </div>
 </div>
 
 <!-- DD -->
 <div class="px-4 mb-4">
-  <div class="bg-gray-900 p-4 rounded">
+  <div class="bg-[#111827] p-2 rounded relative">
+
     <canvas id="ddChart"></canvas>
+
+    <div v-if="drawdown.length === 0"
+         class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
+      No drawdown data
+    </div>
+
   </div>
 </div>
 
@@ -125,18 +138,27 @@ data(){
 methods:{
 
 async loadData(){
+
   try{
     const c = await fetch(API+"/closes");
     this.closes = await c.json();
-  }catch{ this.closes = [] }
+  }catch{
+    this.closes = [];
+  }
 
   try{
     const acc = await fetch(API+"/account");
     this.account = await acc.json();
-  }catch{ this.account = {} }
+  }catch{
+    this.account = {};
+  }
 
   this.calculate();
-  this.renderCharts();
+
+  this.$nextTick(()=>{
+    this.renderCharts();
+  });
+
   this.initTV();
 },
 
@@ -148,7 +170,6 @@ calculate(){
 
   let wins = 0;
   let losses = 0;
-
   let grossWin = 0;
   let grossLoss = 0;
 
@@ -171,11 +192,11 @@ calculate(){
     if(p > 0){
       wins++;
       grossWin += p;
-      if(this.sessionStats[session]) this.sessionStats[session].win++;
-    }else{
+      this.sessionStats[session]?.win++;
+    } else {
       losses++;
       grossLoss += Math.abs(p);
-      if(this.sessionStats[session]) this.sessionStats[session].loss++;
+      this.sessionStats[session]?.loss++;
     }
 
     peak = Math.max(peak, equity);
@@ -183,74 +204,69 @@ calculate(){
 
     maxDD = Math.max(maxDD, dd);
 
-    this.equity.push({
-      x: new Date(t.time * 1000),
-      y: equity
-    });
-
-    this.drawdown.push({
-      x: new Date(t.time * 1000),
-      y: dd
-    });
+    this.equity.push({ x:new Date(t.time*1000), y:equity });
+    this.drawdown.push({ x:new Date(t.time*1000), y:dd });
 
   });
 
-  this.winrate = wins + losses > 0
-    ? Math.round((wins/(wins+losses))*100)
-    : 0;
-
+  this.winrate = wins+losses>0 ? Math.round((wins/(wins+losses))*100) : 0;
   this.profit = equity.toFixed(2);
   this.maxDD = maxDD.toFixed(2);
-
-  this.profitFactor = grossLoss > 0
-    ? (grossWin/grossLoss).toFixed(2)
-    : "-";
-
-  this.avgProfit = this.closes.length > 0
-    ? (equity / this.closes.length).toFixed(2)
-    : 0;
+  this.profitFactor = grossLoss>0 ? (grossWin/grossLoss).toFixed(2) : "-";
+  this.avgProfit = this.closes.length>0 ? (equity/this.closes.length).toFixed(2) : 0;
 },
 
 renderCharts(){
 
+  const eq = document.getElementById("equityChart");
+  const dd = document.getElementById("ddChart");
+
+  if(!eq || !dd) return;
+
   if(this.equityChart) this.equityChart.destroy();
   if(this.ddChart) this.ddChart.destroy();
 
-  this.equityChart = new Chart(
-    document.getElementById("equityChart"),
-    {
-      type:"line",
-      data:{
-        datasets:[{
-          data:this.equity
-        }]
-      },
-      options:{
-        parsing:false,
-        scales:{
-          x:{type:"time"}
-        }
+  this.equityChart = new Chart(eq,{
+    type:"line",
+    data:{
+      datasets:[{
+        data:this.equity,
+        borderColor:"#00ff99",
+        borderWidth:2,
+        tension:0.3,
+        pointRadius:0
+      }]
+    },
+    options:{
+      parsing:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{type:"time", grid:{color:"#222"}},
+        y:{grid:{color:"#222"}}
       }
     }
-  );
+  });
 
-  this.ddChart = new Chart(
-    document.getElementById("ddChart"),
-    {
-      type:"line",
-      data:{
-        datasets:[{
-          data:this.drawdown
-        }]
-      },
-      options:{
-        parsing:false,
-        scales:{
-          x:{type:"time"}
-        }
+  this.ddChart = new Chart(dd,{
+    type:"line",
+    data:{
+      datasets:[{
+        data:this.drawdown,
+        borderColor:"#ff4d4d",
+        borderWidth:2,
+        tension:0.3,
+        pointRadius:0
+      }]
+    },
+    options:{
+      parsing:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{type:"time", grid:{color:"#222"}},
+        y:{grid:{color:"#222"}}
       }
     }
-  );
+  });
 },
 
 initTV(){
@@ -261,7 +277,7 @@ initTV(){
     symbol:"OANDA:XAUUSD",
     interval:"5",
     theme:"dark",
-    height:400,
+    height:350,
     width:"100%"
   });
 
