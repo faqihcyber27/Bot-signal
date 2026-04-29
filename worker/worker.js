@@ -94,6 +94,20 @@ export default {
           return json({ error: "invalid profit" }, 400);
         }
 
+        // Dedup check: kalau trade_id sudah ada di closes dalam 5 menit terakhir,
+        // skip insert (avoid duplicate close records dari restart bot)
+        if (d.trade_id) {
+          const recentCutoff = (d.time || Date.now()) - 5 * 60 * 1000;
+          const dup = await env.DB.prepare(`
+            SELECT id FROM closes 
+            WHERE trade_id = ? AND timestamp > ? 
+            LIMIT 1
+          `).bind(d.trade_id, recentCutoff).first();
+          if (dup) {
+            return json({ status: "ok", duplicate: true });
+          }
+        }
+
         // Insert close record
         await env.DB.prepare(`
           INSERT INTO closes (trade_id, ticket, exit_price, profit, reason, session, timestamp)
@@ -177,6 +191,47 @@ export default {
         return json(results);
       }
 
+      // ─── LOG STREAMING ─────────────────────────────────────
+      // Receive log lines from bot for live monitoring
+      if (path === "/log" && request.method === "POST") {
+        const d = await request.json();
+        await env.DB.prepare(`
+          INSERT INTO logs (level, logger, message, timestamp)
+          VALUES (?, ?, ?, ?)
+        `).bind(
+          d.level || "INFO",
+          d.logger || "",
+          (d.message || "").substring(0, 1000),  // safety truncate
+          d.timestamp || Date.now()
+        ).run();
+        return json({ status: "ok" });
+      }
+
+      // GET logs (with optional level filter)
+      if (path === "/logs") {
+        const limit = parseInt(url.searchParams.get("limit") || "200");
+        const level = url.searchParams.get("level");  // optional filter
+        let query = `SELECT * FROM logs`;
+        const args = [];
+        if (level) {
+          query += ` WHERE level = ?`;
+          args.push(level);
+        }
+        query += ` ORDER BY id DESC LIMIT ?`;
+        args.push(limit);
+        const data = await env.DB.prepare(query).bind(...args).all();
+        return json(data.results || []);
+      }
+
+      // Cleanup old logs (called manually atau oleh cron worker terpisah)
+      if (path === "/logs/cleanup" && request.method === "POST") {
+        const cutoff = Date.now() - (24 * 60 * 60 * 1000);  // 24h ago
+        const result = await env.DB.prepare(`
+          DELETE FROM logs WHERE timestamp < ?
+        `).bind(cutoff).run();
+        return json({ status: "ok", deleted: result.meta.changes });
+      }
+
       // ─── CLOSES (existing - improved) ─────────────────────
       if (path === "/closes") {
         const limit = parseInt(url.searchParams.get("limit") || "200");
@@ -201,11 +256,42 @@ export default {
       }
 
       // ─── TRADES OPEN (currently active) ────────────────────
+      // Exclude trades yang sebenarnya sudah di-close (ada di closes table)
+      // Ini fix untuk "stuck position" yang tidak update status='closed'
       if (path === "/trades/open") {
         const data = await env.DB.prepare(`
-          SELECT * FROM trades WHERE status = 'open' ORDER BY timestamp DESC
+          SELECT * FROM trades 
+          WHERE status = 'open' 
+          AND ticket NOT IN (
+            SELECT trade_id FROM closes WHERE trade_id IS NOT NULL
+          )
+          ORDER BY timestamp DESC
         `).all();
         return json(data.results || []);
+      }
+
+      // ─── ADMIN: RECONCILE (fix stuck open trades) ──────────
+      // Auto-mark trades sebagai 'closed' kalau ada close record
+      if (path === "/admin/reconcile" && request.method === "POST") {
+        const result = await env.DB.prepare(`
+          UPDATE trades 
+          SET status = 'closed' 
+          WHERE status = 'open' 
+          AND ticket IN (SELECT trade_id FROM closes WHERE trade_id IS NOT NULL)
+        `).run();
+        return json({ status: "ok", reconciled: result.meta.changes });
+      }
+
+      // ─── ADMIN: FORCE CLOSE STUCK (cleanup tanpa close record) ─
+      // Mark semua open trade > 24h sebagai closed (orphaned)
+      if (path === "/admin/cleanup_stuck" && request.method === "POST") {
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        const result = await env.DB.prepare(`
+          UPDATE trades 
+          SET status = 'closed', close_reason = 'orphaned_cleanup', close_time = ?
+          WHERE status = 'open' AND timestamp < ?
+        `).bind(Date.now(), cutoff).run();
+        return json({ status: "ok", cleaned: result.meta.changes });
       }
 
       // ─── MODES (per-mode stats) ────────────────────────────
@@ -362,3 +448,4 @@ function corsHeaders() {
     "Access-Control-Allow-Headers": "Content-Type",
   };
 }
+
