@@ -32,7 +32,7 @@
       <div class="text-2xl">🤖</div>
       <div>
         <h1 class="text-lg sm:text-xl font-bold">Adaptive Bot Monitor</h1>
-        <p class="text-xs text-slate-400">XAU/USD · v5.3</p>
+        <p class="text-xs text-slate-400">XAU/USD · {{ botVersion }}</p>
       </div>
     </div>
     <div class="flex items-center gap-3">
@@ -247,6 +247,45 @@
     </div>
   </section>
 
+  <!-- LIVE LOGS -->
+  <section class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-slate-300">📟 Live Logs</h2>
+      <div class="flex items-center gap-2">
+        <select v-model="logFilter"
+                class="bg-slate-800 text-slate-200 text-xs px-2 py-1 rounded border border-slate-700">
+          <option value="ALL">All</option>
+          <option value="INFO">Info</option>
+          <option value="WARNING">Warning</option>
+          <option value="ERROR">Error</option>
+          <option value="CRITICAL">Critical</option>
+        </select>
+        <button @click="showLogs = !showLogs"
+                class="text-xs px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-300">
+          {{ showLogs ? '🔽' : '▶️' }}
+        </button>
+      </div>
+    </div>
+    <div v-if="showLogs">
+      <div v-if="filteredLogs.length === 0" class="text-center text-slate-500 text-sm py-4">
+        Belum ada log
+      </div>
+      <div v-else class="bg-slate-950 rounded-md p-2 max-h-96 overflow-y-auto font-mono text-[11px] leading-relaxed">
+        <div v-for="(line, idx) in filteredLogs" :key="idx"
+             class="flex gap-2 py-0.5 border-b border-slate-800/50 last:border-0">
+          <span class="text-slate-600 shrink-0">{{ formatLogTime(line.timestamp) }}</span>
+          <span class="shrink-0 w-16 font-bold"
+                :class="logLevelColor(line.level)">{{ line.level }}</span>
+          <span class="text-slate-500 shrink-0 w-14 truncate">{{ line.logger }}</span>
+          <span class="text-slate-300 break-words flex-1">{{ line.message }}</span>
+        </div>
+      </div>
+      <div class="text-[10px] text-slate-600 mt-2 text-right">
+        {{ filteredLogs.length }} entries · Auto-refresh 10s
+      </div>
+    </div>
+  </section>
+
   <footer class="text-center text-xs text-slate-600 py-6">
     Auto-refresh every 10s · Last update {{ lastUpdate }}
   </footer>
@@ -273,6 +312,10 @@ const app = Vue.createApp({
       equityChart: null,
       ddChart: null,
       lastUpdate: "-",
+      // Live logs
+      logs: [],
+      showLogs: true,
+      logFilter: "ALL",  // ALL / INFO / WARNING / ERROR
     };
   },
 
@@ -313,6 +356,25 @@ const app = Vue.createApp({
     recentTrades() {
       return [...this.closes].slice(0, 10);
     },
+    botVersion() {
+      // Extract version from heartbeat / events: "AdaptiveBot_IDR_v57_PATTERN" → "v5.7"
+      const evts = this.summary.recent_events || [];
+      const startedEvt = evts.find(e => e.type === "bot_started");
+      if (startedEvt && startedEvt.message) {
+        const m = startedEvt.message.match(/v(\d+)_?(\w*)/i);
+        if (m) {
+          // v57 → v5.7, v56 → v5.6, dll
+          const num = m[1];
+          if (num.length === 2) return `v${num[0]}.${num[1]}`;
+          return `v${num}`;
+        }
+      }
+      return "v5.7";  // default fallback
+    },
+    filteredLogs() {
+      if (this.logFilter === "ALL") return this.logs;
+      return this.logs.filter(l => l.level === this.logFilter);
+    },
   },
 
   methods: {
@@ -330,6 +392,16 @@ const app = Vue.createApp({
       } catch (e) {
         console.error("Closes error:", e);
         this.closes = [];
+      }
+
+      // Fetch live logs
+      try {
+        const r = await fetch(`${API}/logs?limit=150`);
+        const data = await r.json();
+        this.logs = Array.isArray(data) ? data : [];
+      } catch (e) {
+        console.error("Logs error:", e);
+        this.logs = [];
       }
 
       this.computeStats();
@@ -463,6 +535,24 @@ const app = Vue.createApp({
       if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
       if (ageSec < 86400) return `${Math.floor(ageSec / 3600)}h ago`;
       return d.toLocaleString("id-ID", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    },
+
+    formatLogTime(ms) {
+      // Format jam:menit:detik untuk log
+      if (!ms) return "--:--:--";
+      const d = new Date(ms);
+      return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    },
+
+    logLevelColor(level) {
+      const map = {
+        INFO: "text-blue-400",
+        WARNING: "text-yellow-400",
+        ERROR: "text-red-400",
+        CRITICAL: "text-red-500",
+        DEBUG: "text-slate-500",
+      };
+      return map[level] || "text-slate-400";
     },
 
     formatAge(seconds) {
