@@ -1,290 +1,498 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XAU Bot Dashboard</title>
-
+<title>XAU Adaptive Bot Dashboard</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/vue@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://s3.tradingview.com/tv.js"></script>
-
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  .status-dot { animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #1f2937; }
+  ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+  .card { transition: transform 0.15s, box-shadow 0.15s; }
+  .card:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+</style>
 </head>
 
-<body class="bg-[#0b0f1a] text-white">
+<body class="bg-slate-950 text-slate-100 min-h-screen">
 
-<div id="app" class="max-w-md mx-auto">
+<div id="app" class="max-w-6xl mx-auto p-3 sm:p-5">
 
-<div class="sticky top-0 bg-[#111827] p-4 flex justify-between">
-  <h1 class="font-bold">📊 Trading Dashboard</h1>
-  <button @click="loadData" class="bg-blue-600 px-3 py-1 rounded text-sm">
-    Refresh
-  </button>
-</div>
+  <!-- HEADER -->
+  <header class="flex items-center justify-between mb-5 pb-4 border-b border-slate-800">
+    <div class="flex items-center gap-3">
+      <div class="text-2xl">🤖</div>
+      <div>
+        <h1 class="text-lg sm:text-xl font-bold">Adaptive Bot Monitor</h1>
+        <p class="text-xs text-slate-400">XAU/USD · v5.3</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <span class="status-dot inline-block w-2.5 h-2.5 rounded-full"
+              :class="statusColor"></span>
+        <span class="text-xs sm:text-sm font-medium">{{ statusLabel }}</span>
+      </div>
+      <button @click="loadData" class="bg-slate-800 hover:bg-slate-700 text-xs px-3 py-1.5 rounded-md transition">
+        ↻
+      </button>
+    </div>
+  </header>
 
-<div class="p-4 grid grid-cols-2 gap-3 text-sm">
-
-  <div class="bg-[#111827] p-3 rounded text-center">
-    Trades <br><b>{{ closes.length }}</b>
-  </div>
-
-  <div class="bg-green-500/10 p-3 rounded text-center text-green-400">
-    Winrate <br><b>{{ winrate }}%</b>
-  </div>
-
-  <div class="bg-blue-500/10 p-3 rounded text-center text-blue-400">
-    Profit <br><b>{{ profit }}</b>
-  </div>
-
-  <div class="bg-red-500/10 p-3 rounded text-center text-red-400">
-    Max DD <br><b>{{ maxDD }}</b>
-  </div>
-
-  <div class="bg-yellow-500/10 p-3 rounded text-center text-yellow-400">
-    PF <br><b>{{ profitFactor }}</b>
-  </div>
-
-  <div class="bg-purple-500/10 p-3 rounded text-center text-purple-400">
-    Avg <br><b>{{ avgProfit }}</b>
-  </div>
-
-</div>
-
-<div class="px-4 mb-4">
-  <div class="bg-[#111827] p-4 rounded text-sm">
-    💰 {{ account.balance || 0 }} <br>
-    📊 {{ account.equity || 0 }} <br>
-    📉 {{ account.profit || 0 }}
-  </div>
-</div>
-
-<div class="px-4 mb-4">
-  <div class="bg-[#111827] p-4 rounded text-sm">
-    <b>🧠 Session</b><br>
-    <div v-for="(v,k) in sessionStats" :key="k">
-      {{k}} → {{v.win}} / {{v.loss}}
+  <!-- BOT STATUS BAR -->
+  <div class="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+    <div class="bg-slate-900 px-3 py-2 rounded-md">
+      <div class="text-slate-400">Mode</div>
+      <div class="font-semibold capitalize" :class="modeColor">{{ summary.status?.mode || '-' }}</div>
+    </div>
+    <div class="bg-slate-900 px-3 py-2 rounded-md">
+      <div class="text-slate-400">Last Heartbeat</div>
+      <div class="font-semibold" :class="summary.status?.is_alive ? 'text-emerald-400' : 'text-red-400'">
+        {{ formatAge(summary.status?.age_seconds) }}
+      </div>
+    </div>
+    <div class="bg-slate-900 px-3 py-2 rounded-md">
+      <div class="text-slate-400">Open Positions</div>
+      <div class="font-semibold">{{ summary.open_positions || 0 }}</div>
+    </div>
+    <div class="bg-slate-900 px-3 py-2 rounded-md">
+      <div class="text-slate-400">Streak</div>
+      <div class="font-semibold" :class="(summary.status?.consecutive_losses || 0) >= 2 ? 'text-amber-400' : ''">
+        {{ summary.status?.consecutive_losses || 0 }} L
+      </div>
     </div>
   </div>
-</div>
 
-<div class="px-4 mb-4">
-  <div class="bg-[#111827] p-2 rounded">
-    <div id="tv_chart"></div>
-  </div>
-</div>
-
-<div class="px-4 mb-4">
-  <div class="bg-[#111827] p-2 rounded relative">
-    <canvas id="equityChart"></canvas>
-    <div v-if="equity.length === 0"
-      class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
-      No trade data
+  <!-- ACCOUNT -->
+  <section class="mb-4 bg-gradient-to-br from-slate-900 to-slate-800 p-4 rounded-xl card">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-slate-300">💰 Account</h2>
+      <span class="text-xs text-slate-500">IDR</span>
     </div>
-  </div>
-</div>
-
-<div class="px-4 mb-4">
-  <div class="bg-[#111827] p-2 rounded relative">
-    <canvas id="ddChart"></canvas>
-    <div v-if="drawdown.length === 0"
-      class="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
-      No drawdown data
+    <div class="grid grid-cols-3 gap-3 text-center">
+      <div>
+        <div class="text-xs text-slate-400">Balance</div>
+        <div class="text-base sm:text-lg font-bold">{{ formatIDR(summary.account?.balance) }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-400">Equity</div>
+        <div class="text-base sm:text-lg font-bold">{{ formatIDR(summary.account?.equity) }}</div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-400">Today P/L</div>
+        <div class="text-base sm:text-lg font-bold"
+             :class="(summary.account?.profit || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'">
+          {{ formatIDR(summary.account?.profit) }}
+        </div>
+      </div>
     </div>
-  </div>
-</div>
+  </section>
 
+  <!-- KPI GRID -->
+  <section class="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="bg-slate-900 p-3 rounded-xl card">
+      <div class="text-xs text-slate-400">Today Trades</div>
+      <div class="text-xl sm:text-2xl font-bold mt-1">{{ summary.today?.trades || 0 }}</div>
+      <div class="text-xs text-slate-500 mt-0.5">
+        {{ summary.today?.wins || 0 }}W · {{ summary.today?.losses || 0 }}L
+      </div>
+    </div>
+    <div class="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl card">
+      <div class="text-xs text-emerald-300">Today Profit</div>
+      <div class="text-xl sm:text-2xl font-bold text-emerald-400 mt-1">
+        {{ formatIDR(summary.today?.profit, true) }}
+      </div>
+      <div class="text-xs text-slate-500 mt-0.5">{{ todayWinRate }}% WR</div>
+    </div>
+    <div class="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl card">
+      <div class="text-xs text-blue-300">All Time</div>
+      <div class="text-xl sm:text-2xl font-bold text-blue-400 mt-1">
+        {{ formatIDR(summary.all_time?.profit, true) }}
+      </div>
+      <div class="text-xs text-slate-500 mt-0.5">
+        {{ summary.all_time?.trades || 0 }} trades · {{ allTimeWinRate }}%
+      </div>
+    </div>
+    <div class="bg-purple-500/10 border border-purple-500/20 p-3 rounded-xl card">
+      <div class="text-xs text-purple-300">Profit Factor</div>
+      <div class="text-xl sm:text-2xl font-bold text-purple-400 mt-1">{{ profitFactor }}</div>
+      <div class="text-xs text-slate-500 mt-0.5">PF · Avg {{ formatIDR(avgProfit, true) }}</div>
+    </div>
+  </section>
+
+  <!-- MODE BREAKDOWN -->
+  <section v-if="summary.modes && summary.modes.length" class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <h2 class="text-sm font-semibold text-slate-300 mb-3">🎯 Performance per Mode</h2>
+    <div class="space-y-2">
+      <div v-for="m in summary.modes" :key="m.mode"
+           class="flex items-center justify-between bg-slate-800/50 px-3 py-2 rounded-md">
+        <div class="flex items-center gap-2">
+          <span class="text-lg">{{ modeEmoji(m.mode) }}</span>
+          <div>
+            <div class="text-sm font-medium capitalize">{{ m.mode }}</div>
+            <div class="text-xs text-slate-400">
+              {{ m.total }} trades · {{ Math.round((m.wins / m.total) * 100) || 0 }}% WR
+            </div>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-sm font-bold"
+               :class="(m.total_profit || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'">
+            {{ formatIDR(m.total_profit, true) }}
+          </div>
+          <div class="text-xs text-slate-500">
+            avg {{ formatIDR(m.avg_profit, true) }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SESSION STATS -->
+  <section class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <h2 class="text-sm font-semibold text-slate-300 mb-3">🌏 Performance per Session</h2>
+    <div class="grid grid-cols-3 gap-2 text-xs">
+      <div v-for="(s, key) in sessionStats" :key="key"
+           class="bg-slate-800/50 p-2 rounded-md text-center">
+        <div class="text-slate-400 font-medium">{{ key }}</div>
+        <div class="text-emerald-400 mt-1">{{ s.win }} W</div>
+        <div class="text-red-400">{{ s.loss }} L</div>
+        <div class="text-slate-500 mt-1 text-[10px]">
+          {{ s.win + s.loss > 0 ? Math.round((s.win / (s.win + s.loss)) * 100) : 0 }}%
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EQUITY CURVE -->
+  <section class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <h2 class="text-sm font-semibold text-slate-300 mb-3">📈 Equity Curve</h2>
+    <div class="relative" style="height: 220px;">
+      <canvas id="equityChart"></canvas>
+      <div v-if="closes.length === 0"
+           class="absolute inset-0 flex items-center justify-center text-slate-600 text-xs">
+        Belum ada data trade
+      </div>
+    </div>
+  </section>
+
+  <!-- DRAWDOWN CHART -->
+  <section class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-slate-300">📉 Drawdown</h2>
+      <span class="text-xs text-red-400">Max DD: {{ formatIDR(maxDD, true) }}</span>
+    </div>
+    <div class="relative" style="height: 180px;">
+      <canvas id="ddChart"></canvas>
+    </div>
+  </section>
+
+  <!-- RECENT TRADES -->
+  <section class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-slate-300">📜 Recent Trades</h2>
+      <span class="text-xs text-slate-500">{{ closes.length }} total</span>
+    </div>
+    <div class="overflow-x-auto -mx-1">
+      <div v-if="recentTrades.length === 0" class="text-center text-slate-500 text-sm py-4">
+        Belum ada trade closed
+      </div>
+      <div v-else class="space-y-1.5">
+        <div v-for="t in recentTrades" :key="t.id || t.time"
+             class="flex items-center justify-between bg-slate-800/40 px-3 py-2 rounded-md text-xs">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-base">{{ t.profit >= 0 ? '✅' : '❌' }}</span>
+            <div class="min-w-0">
+              <div class="font-medium truncate">
+                #{{ t.trade_id || t.ticket || '?' }}
+                <span class="text-slate-500">·</span>
+                <span class="text-slate-400">{{ t.reason || '?' }}</span>
+              </div>
+              <div class="text-slate-500 text-[10px]">
+                {{ formatTime(t.time) }} · {{ t.session || '?' }}
+              </div>
+            </div>
+          </div>
+          <div class="text-right ml-2 whitespace-nowrap">
+            <div class="font-bold" :class="t.profit >= 0 ? 'text-emerald-400' : 'text-red-400'">
+              {{ formatIDR(t.profit, true) }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECENT EVENTS -->
+  <section v-if="summary.recent_events && summary.recent_events.length"
+           class="mb-4 bg-slate-900 p-4 rounded-xl card">
+    <h2 class="text-sm font-semibold text-slate-300 mb-3">🔔 Recent Events</h2>
+    <div class="space-y-1.5">
+      <div v-for="ev in summary.recent_events" :key="ev.id"
+           class="flex items-start gap-2 bg-slate-800/40 px-3 py-2 rounded-md text-xs">
+        <span class="text-base">{{ eventEmoji(ev.type) }}</span>
+        <div class="flex-1 min-w-0">
+          <div class="font-medium">{{ ev.message || ev.type }}</div>
+          <div class="text-slate-500 text-[10px]">{{ formatTime(ev.timestamp) }}</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="text-center text-xs text-slate-600 py-6">
+    Auto-refresh every 10s · Last update {{ lastUpdate }}
+  </footer>
 </div>
 
 <script>
 const API = "https://worker-bot.jihadwajib68.workers.dev";
 
 const app = Vue.createApp({
+  data() {
+    return {
+      summary: {},
+      closes: [],
+      equity: [],
+      drawdown: [],
+      maxDD: 0,
+      profitFactor: "-",
+      avgProfit: 0,
+      sessionStats: {
+        ASIA: { win: 0, loss: 0 },
+        LONDON: { win: 0, loss: 0 },
+        NEWYORK: { win: 0, loss: 0 },
+      },
+      equityChart: null,
+      ddChart: null,
+      lastUpdate: "-",
+    };
+  },
 
-data(){
-  return{
-    closes:[],
-    account:{},
-    equity:[],
-    drawdown:[],
-    winrate:0,
-    profit:0,
-    maxDD:0,
-    profitFactor:0,
-    avgProfit:0,
-    sessionStats:{
-      ASIA:{win:0,loss:0},
-      LONDON:{win:0,loss:0},
-      NEWYORK:{win:0,loss:0},
-      UNKNOWN:{win:0,loss:0} // 🔥 FIX
+  computed: {
+    statusColor() {
+      if (!this.summary.status) return "bg-slate-500";
+      const s = this.summary.status;
+      if (!s.is_alive) return "bg-red-500";
+      if (s.status === "killed") return "bg-red-500";
+      if (s.status === "learning") return "bg-amber-500";
+      return "bg-emerald-500";
     },
-    equityChart:null,
-    ddChart:null,
-    tvLoaded:false
-  }
-},
+    statusLabel() {
+      if (!this.summary.status) return "Loading...";
+      const s = this.summary.status;
+      if (!s.is_alive) return "Offline";
+      if (s.status === "killed") return "Killed";
+      if (s.status === "learning") return "Learning";
+      return "Running";
+    },
+    modeColor() {
+      const mode = this.summary.status?.mode;
+      if (mode === "scalping") return "text-yellow-400";
+      if (mode === "intraday") return "text-blue-400";
+      if (mode === "swing") return "text-purple-400";
+      return "text-slate-400";
+    },
+    todayWinRate() {
+      const t = this.summary.today;
+      if (!t || t.trades === 0) return 0;
+      return Math.round((t.wins / t.trades) * 100);
+    },
+    allTimeWinRate() {
+      const a = this.summary.all_time;
+      if (!a || a.trades === 0) return 0;
+      return Math.round((a.wins / a.trades) * 100);
+    },
+    recentTrades() {
+      return [...this.closes].slice(0, 10);
+    },
+  },
 
-methods:{
-
-async loadData(){
-
-  try{
-    const c = await fetch(API+"/closes");
-    this.closes = await c.json();
-
-    // 🔥 FIX: urutan biar timeline benar
-    this.closes.reverse();
-
-  }catch(e){
-    console.log("closes error", e);
-    this.closes = [];
-  }
-
-  try{
-    const acc = await fetch(API+"/account");
-    this.account = await acc.json();
-  }catch(e){
-    console.log("account error", e);
-    this.account = {};
-  }
-
-  this.calculate();
-  this.renderCharts();
-  this.initTV();
-},
-
-calculate(){
-
-  var equity = 0;
-  var peak = 0;
-  var maxDD = 0;
-
-  var wins = 0;
-  var losses = 0;
-  var grossWin = 0;
-  var grossLoss = 0;
-
-  this.equity = [];
-  this.drawdown = [];
-
-  this.sessionStats = {
-    ASIA:{win:0,loss:0},
-    LONDON:{win:0,loss:0},
-    NEWYORK:{win:0,loss:0},
-    UNKNOWN:{win:0,loss:0}
-  };
-
-  for(var i=0;i<this.closes.length;i++){
-
-    var t = this.closes[i];
-    var p = t.profit || 0;
-    var session = t.session || "UNKNOWN";
-
-    equity += p;
-
-    if(p > 0){
-      wins++;
-      grossWin += p;
-      this.sessionStats[session].win++;
-    } else {
-      losses++;
-      grossLoss += Math.abs(p);
-      this.sessionStats[session].loss++;
-    }
-
-    if(equity > peak) peak = equity;
-
-    var dd = peak - equity;
-    if(dd > maxDD) maxDD = dd;
-
-    this.equity.push(equity);
-    this.drawdown.push(dd);
-  }
-
-  this.winrate = (wins+losses)>0 ? Math.round((wins/(wins+losses))*100) : 0;
-  this.profit = equity.toFixed(2);
-  this.maxDD = maxDD.toFixed(2);
-
-  // 🔥 FIX PROFIT FACTOR
-  this.profitFactor = grossLoss > 0
-    ? (grossWin/grossLoss).toFixed(2)
-    : (grossWin > 0 ? "∞" : "-");
-
-  this.avgProfit = this.closes.length>0
-    ? (equity/this.closes.length).toFixed(2)
-    : 0;
-},
-
-renderCharts(){
-
-  try{
-
-    var eq = document.getElementById("equityChart");
-    var dd = document.getElementById("ddChart");
-
-    if(!eq || !dd) return;
-
-    if(this.equityChart) this.equityChart.destroy();
-    if(this.ddChart) this.ddChart.destroy();
-
-    this.equityChart = new Chart(eq,{
-      type:"line",
-      data:{
-        labels:this.closes.map(function(t){
-          return new Date(t.time).toLocaleTimeString(); // 🔥 FIX TIME
-        }),
-        datasets:[{
-          data:this.equity,
-          borderColor:"#00ff99",
-          tension:0.3
-        }]
+  methods: {
+    async loadData() {
+      try {
+        const r = await fetch(`${API}/summary`);
+        this.summary = await r.json();
+      } catch (e) {
+        console.error("Summary error:", e);
       }
-    });
 
-    this.ddChart = new Chart(dd,{
-      type:"line",
-      data:{
-        labels:this.closes.map(function(t){
-          return new Date(t.time).toLocaleTimeString();
-        }),
-        datasets:[{
-          data:this.drawdown,
-          borderColor:"#ff4d4d",
-          tension:0.3
-        }]
+      try {
+        const r = await fetch(`${API}/closes?limit=200`);
+        this.closes = await r.json();
+      } catch (e) {
+        console.error("Closes error:", e);
+        this.closes = [];
       }
-    });
 
-  }catch(e){
-    console.log("chart error", e);
-  }
-},
+      this.computeStats();
+      this.renderCharts();
+      this.lastUpdate = new Date().toLocaleTimeString("id-ID");
+    },
 
-initTV(){
-  if(this.tvLoaded) return;
+    computeStats() {
+      let equity = 0, peak = 0, maxDD = 0;
+      let wins = 0, losses = 0, grossWin = 0, grossLoss = 0;
 
-  try{
-    new TradingView.widget({
-      container_id:"tv_chart",
-      symbol:"OANDA:XAUUSD",
-      interval:"5",
-      theme:"dark",
-      height:350,
-      width:"100%"
-    });
-    this.tvLoaded = true;
-  }catch(e){
-    console.log("tv error", e);
-  }
-}
+      this.equity = [];
+      this.drawdown = [];
+      this.sessionStats = {
+        ASIA: { win: 0, loss: 0 },
+        LONDON: { win: 0, loss: 0 },
+        NEWYORK: { win: 0, loss: 0 },
+      };
 
-},
+      // Iterate dari oldest ke newest (closes API sudah DESC, jadi reverse)
+      const ordered = [...this.closes].reverse();
+      for (const t of ordered) {
+        const p = t.profit || 0;
+        const session = t.session || "UNKNOWN";
 
-mounted(){
-  this.loadData();
-  setInterval(this.loadData,10000);
-}
+        equity += p;
+        if (p > 0) {
+          wins++;
+          grossWin += p;
+          if (this.sessionStats[session]) this.sessionStats[session].win++;
+        } else {
+          losses++;
+          grossLoss += Math.abs(p);
+          if (this.sessionStats[session]) this.sessionStats[session].loss++;
+        }
 
+        if (equity > peak) peak = equity;
+        const dd = peak - equity;
+        if (dd > maxDD) maxDD = dd;
+
+        this.equity.push(equity);
+        this.drawdown.push(dd);
+      }
+
+      this.maxDD = maxDD;
+      this.profitFactor = grossLoss > 0
+        ? (grossWin / grossLoss).toFixed(2)
+        : (grossWin > 0 ? "∞" : "-");
+      this.avgProfit = ordered.length > 0 ? equity / ordered.length : 0;
+    },
+
+    renderCharts() {
+      try {
+        const eqEl = document.getElementById("equityChart");
+        const ddEl = document.getElementById("ddChart");
+        if (!eqEl || !ddEl) return;
+
+        if (this.equityChart) this.equityChart.destroy();
+        if (this.ddChart) this.ddChart.destroy();
+
+        const labels = this.equity.map((_, i) => `T${i + 1}`);
+        const commonOpts = {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: "#64748b", font: { size: 9 } } },
+            y: { grid: { color: "#1e293b" }, ticks: { color: "#64748b", font: { size: 9 } } },
+          },
+        };
+
+        this.equityChart = new Chart(eqEl, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              data: this.equity,
+              borderColor: "#10b981",
+              backgroundColor: "rgba(16, 185, 129, 0.1)",
+              borderWidth: 2,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 0,
+            }],
+          },
+          options: commonOpts,
+        });
+
+        this.ddChart = new Chart(ddEl, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              data: this.drawdown,
+              borderColor: "#ef4444",
+              backgroundColor: "rgba(239, 68, 68, 0.1)",
+              borderWidth: 2,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 0,
+            }],
+          },
+          options: commonOpts,
+        });
+      } catch (e) {
+        console.error("Chart error:", e);
+      }
+    },
+
+    formatIDR(value, compact = false) {
+      if (value === null || value === undefined) return "-";
+      const num = Number(value);
+      if (isNaN(num)) return "-";
+      if (compact && Math.abs(num) >= 1000000) {
+        return `Rp ${(num / 1000000).toFixed(2)}M`;
+      }
+      if (compact && Math.abs(num) >= 1000) {
+        return `Rp ${(num / 1000).toFixed(1)}K`;
+      }
+      const sign = num < 0 ? "-" : "";
+      const abs = Math.abs(num);
+      return `${sign}Rp ${Math.round(abs).toLocaleString("id-ID")}`;
+    },
+
+    formatTime(ms) {
+      if (!ms) return "-";
+      const d = new Date(ms);
+      const now = Date.now();
+      const ageSec = (now - ms) / 1000;
+      if (ageSec < 60) return "now";
+      if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
+      if (ageSec < 86400) return `${Math.floor(ageSec / 3600)}h ago`;
+      return d.toLocaleString("id-ID", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    },
+
+    formatAge(seconds) {
+      if (seconds === undefined || seconds === null) return "-";
+      if (seconds < 60) return `${seconds}s ago`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      return `${Math.floor(seconds / 3600)}h ago`;
+    },
+
+    modeEmoji(mode) {
+      return { scalping: "⚡", intraday: "🎯", swing: "📈" }[mode] || "📊";
+    },
+
+    eventEmoji(type) {
+      const map = {
+        bot_started: "🚀",
+        bot_stopped: "🛑",
+        regime_change: "🔄",
+        kill_dd: "🚨",
+        kill_streak: "🚨",
+        emergency_dd: "🚨",
+      };
+      return map[type] || "ℹ️";
+    },
+  },
+
+  mounted() {
+    this.loadData();
+    setInterval(this.loadData, 10000);
+  },
 });
 
 app.mount("#app");
