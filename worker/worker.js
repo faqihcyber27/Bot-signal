@@ -1,451 +1,451 @@
 /**
- * XAU Trading Bot Dashboard - Cloudflare Worker v2
- *
- * NEW ENDPOINTS (vs v1):
- *   POST /heartbeat   - liveness ping setiap 60s
- *   POST /event       - bot events (mode change, kill switch, dll)
- *   GET  /heartbeat   - ambil status terakhir
- *   GET  /events      - ambil recent events
- *   GET  /summary     - dashboard summary lengkap dalam 1 call
- *   GET  /trades/open - posisi yang masih open
- *   GET  /modes       - stats per mode
- *
- * IMPROVED:
- *   - Trade close juga update trades.exit & trades.profit (untuk match)
- *   - /closes return dengan join trade info
- *   - /stats include per-mode breakdown
- *
- * REQUIRED D1 SCHEMA (lihat schema.sql):
- *   trades, closes, signals, account, heartbeats, events
+ * ╔═══════════════════════════════════════════════════════════╗
+ * ║  XAUUSD AI Signal Engine — Cloudflare Worker API          ║
+ * ║                                                            ║
+ * ║  Endpoints:                                                ║
+ * ║    POST /sync               — Receive data from VPS        ║
+ * ║    GET  /api/overview       — Dashboard summary stats      ║
+ * ║    GET  /api/signals        — Recent signals list          ║
+ * ║    GET  /api/trades         — Recent trades list           ║
+ * ║    GET  /api/equity         — Equity curve data            ║
+ * ║    GET  /api/tiers          — Performance per tier         ║
+ * ║    GET  /api/status         — Live system status           ║
+ * ║    GET  /api/distribution   — Outcome distribution         ║
+ * ║    GET  /                   — Health check                 ║
+ * ║                                                            ║
+ * ║  Auth: Bearer token on /sync only (read endpoints public)  ║
+ * ╚═══════════════════════════════════════════════════════════╝
  */
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400",
+};
+
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+
+const error = (msg, status = 400) => json({ error: msg }, status);
+
+// ─────────────────────────────────────────────────────────
+//  AUTH
+// ─────────────────────────────────────────────────────────
+async function authSync(request, env) {
+  const auth = request.headers.get("Authorization");
+  if (!auth || !auth.startsWith("Bearer ")) return false;
+  const token = auth.replace("Bearer ", "").trim();
+  return token === env.SYNC_TOKEN;
+}
+
+// ─────────────────────────────────────────────────────────
+//  POST /sync — Receive batch update from VPS
+// ─────────────────────────────────────────────────────────
+async function handleSync(request, env) {
+  if (!(await authSync(request, env))) {
+    return error("Unauthorized", 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return error("Invalid JSON", 400);
+  }
+
+  const synced = { signals: 0, trades: 0, status: 0, snapshot: 0 };
+
+  try {
+    // ── SIGNALS upsert ──
+    if (Array.isArray(body.signals) && body.signals.length > 0) {
+      for (const s of body.signals) {
+        await env.DB.prepare(
+          `INSERT INTO signals (
+            id, timestamp, mode, tier, score, direction, confidence,
+            entry_price, stop_loss, take_profit_1, take_profit_2,
+            risk_reward, reasoning_summary, outcome, outcome_pnl, closed_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET
+            outcome=excluded.outcome,
+            outcome_pnl=excluded.outcome_pnl,
+            closed_at=excluded.closed_at,
+            synced_at=CURRENT_TIMESTAMP`
+        )
+          .bind(
+            s.id, s.timestamp, s.mode, s.tier, s.score, s.direction,
+            s.confidence ?? null,
+            s.entry_price ?? null, s.stop_loss ?? null,
+            s.take_profit_1 ?? null, s.take_profit_2 ?? null,
+            s.risk_reward ?? null, s.reasoning_summary ?? null,
+            s.outcome ?? null, s.outcome_pnl ?? null, s.closed_at ?? null
+          )
+          .run();
+        synced.signals++;
+      }
+    }
+
+    // ── TRADES upsert ──
+    if (Array.isArray(body.trades) && body.trades.length > 0) {
+      for (const t of body.trades) {
+        await env.DB.prepare(
+          `INSERT INTO trades (
+            id, signal_id, ticket, direction, lot, entry_price,
+            stop_loss, take_profit_1, take_profit_2, opened_at,
+            tp1_hit, closed, closed_at, close_reason, profit_loss
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(ticket) DO UPDATE SET
+            tp1_hit=excluded.tp1_hit,
+            closed=excluded.closed,
+            closed_at=excluded.closed_at,
+            close_reason=excluded.close_reason,
+            profit_loss=excluded.profit_loss,
+            synced_at=CURRENT_TIMESTAMP`
+        )
+          .bind(
+            t.id, t.signal_id ?? null, t.ticket, t.direction, t.lot,
+            t.entry_price, t.stop_loss, t.take_profit_1, t.take_profit_2,
+            t.opened_at,
+            t.tp1_hit ? 1 : 0, t.closed ? 1 : 0,
+            t.closed_at ?? null, t.close_reason ?? null, t.profit_loss ?? null
+          )
+          .run();
+        synced.trades++;
+      }
+    }
+
+    // ── SYSTEM STATUS upsert (id=1) ──
+    if (body.status) {
+      const s = body.status;
+      await env.DB.prepare(
+        `INSERT INTO system_status (
+          id, auto_mode, balance, equity, peak_balance,
+          open_positions, daily_pl, daily_pl_pct, drawdown_pct,
+          consec_losses, kill_switch_active, manual_paused,
+          last_signal_at, updated_at
+        ) VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+          auto_mode=excluded.auto_mode,
+          balance=excluded.balance,
+          equity=excluded.equity,
+          peak_balance=excluded.peak_balance,
+          open_positions=excluded.open_positions,
+          daily_pl=excluded.daily_pl,
+          daily_pl_pct=excluded.daily_pl_pct,
+          drawdown_pct=excluded.drawdown_pct,
+          consec_losses=excluded.consec_losses,
+          kill_switch_active=excluded.kill_switch_active,
+          manual_paused=excluded.manual_paused,
+          last_signal_at=excluded.last_signal_at,
+          updated_at=CURRENT_TIMESTAMP`
+      )
+        .bind(
+          s.auto_mode ?? null, s.balance ?? null, s.equity ?? null,
+          s.peak_balance ?? null, s.open_positions ?? 0,
+          s.daily_pl ?? 0, s.daily_pl_pct ?? 0,
+          s.drawdown_pct ?? 0, s.consec_losses ?? 0,
+          s.kill_switch_active ? 1 : 0,
+          s.manual_paused ? 1 : 0,
+          s.last_signal_at ?? null
+        )
+        .run();
+      synced.status = 1;
+    }
+
+    // ── DAILY SNAPSHOT upsert ──
+    if (body.snapshot) {
+      const sn = body.snapshot;
+      await env.DB.prepare(
+        `INSERT INTO daily_snapshots (
+          date, start_balance, end_balance, peak_balance,
+          trades_count, wins_count, losses_count, total_pnl
+        ) VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT(date) DO UPDATE SET
+          end_balance=excluded.end_balance,
+          peak_balance=excluded.peak_balance,
+          trades_count=excluded.trades_count,
+          wins_count=excluded.wins_count,
+          losses_count=excluded.losses_count,
+          total_pnl=excluded.total_pnl,
+          synced_at=CURRENT_TIMESTAMP`
+      )
+        .bind(
+          sn.date, sn.start_balance,
+          sn.end_balance ?? null, sn.peak_balance ?? null,
+          sn.trades_count ?? 0, sn.wins_count ?? 0,
+          sn.losses_count ?? 0, sn.total_pnl ?? 0
+        )
+        .run();
+      synced.snapshot = 1;
+    }
+
+    return json({ ok: true, synced });
+  } catch (e) {
+    console.error("Sync error:", e.message);
+    return error(`Sync failed: ${e.message}`, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/overview — Dashboard summary
+// ─────────────────────────────────────────────────────────
+async function handleOverview(env) {
+  try {
+    const [statusRes, sigRes, tradeRes, pfRes] = await Promise.all([
+      env.DB.prepare("SELECT * FROM system_status WHERE id = 1").first(),
+
+      env.DB.prepare(
+        `SELECT 
+          COUNT(*) AS total,
+          SUM(CASE WHEN outcome IN ('TP1','TP2') THEN 1 ELSE 0 END) AS tp_hits,
+          SUM(CASE WHEN outcome = 'TP1' THEN 1 ELSE 0 END) AS tp1_hits,
+          SUM(CASE WHEN outcome = 'TP2' THEN 1 ELSE 0 END) AS tp2_hits,
+          SUM(CASE WHEN outcome = 'SL' THEN 1 ELSE 0 END) AS sl_hits,
+          SUM(CASE WHEN outcome = 'BE' THEN 1 ELSE 0 END) AS be_hits
+        FROM signals
+        WHERE timestamp >= datetime('now','-30 days')
+          AND outcome IS NOT NULL`
+      ).first(),
+
+      env.DB.prepare(
+        `SELECT 
+          COUNT(*) AS total,
+          SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
+          SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END) AS losses,
+          COALESCE(SUM(profit_loss),0) AS total_pnl,
+          COALESCE(AVG(profit_loss),0) AS avg_pnl,
+          COALESCE(MAX(profit_loss),0) AS best_trade,
+          COALESCE(MIN(profit_loss),0) AS worst_trade
+        FROM trades
+        WHERE opened_at >= datetime('now','-30 days')
+          AND closed = 1`
+      ).first(),
+
+      env.DB.prepare(
+        `SELECT 
+          COALESCE(SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END),0) AS gross_profit,
+          COALESCE(ABS(SUM(CASE WHEN profit_loss < 0 THEN profit_loss ELSE 0 END)),0) AS gross_loss
+        FROM trades
+        WHERE closed = 1 AND opened_at >= datetime('now','-30 days')`
+      ).first(),
+    ]);
+
+    const totalOutcomes = (sigRes.tp_hits ?? 0) + (sigRes.sl_hits ?? 0);
+    const winRate = totalOutcomes > 0 ? (sigRes.tp_hits / totalOutcomes) * 100 : 0;
+    const profitFactor =
+      pfRes.gross_loss > 0 ? pfRes.gross_profit / pfRes.gross_loss : 0;
+
+    return json({
+      status: statusRes ?? {},
+      stats: {
+        period_days: 30,
+        total_signals: sigRes.total ?? 0,
+        tp_hits: sigRes.tp_hits ?? 0,
+        tp1_hits: sigRes.tp1_hits ?? 0,
+        tp2_hits: sigRes.tp2_hits ?? 0,
+        sl_hits: sigRes.sl_hits ?? 0,
+        be_hits: sigRes.be_hits ?? 0,
+        win_rate: Math.round(winRate * 10) / 10,
+        profit_factor: Math.round(profitFactor * 100) / 100,
+        total_trades: tradeRes.total ?? 0,
+        trades_won: tradeRes.wins ?? 0,
+        trades_lost: tradeRes.losses ?? 0,
+        total_pnl: tradeRes.total_pnl ?? 0,
+        avg_pnl: tradeRes.avg_pnl ?? 0,
+        best_trade: tradeRes.best_trade ?? 0,
+        worst_trade: tradeRes.worst_trade ?? 0,
+      },
+    });
+  } catch (e) {
+    return error(`Overview failed: ${e.message}`, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/signals
+// ─────────────────────────────────────────────────────────
+async function handleSignals(request, env) {
+  const url = new URL(request.url);
+  const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
+  const tier = url.searchParams.get("tier");
+
+  try {
+    let query = "SELECT * FROM signals";
+    const params = [];
+    if (tier) {
+      query += " WHERE tier = ?";
+      params.push(tier);
+    }
+    query += " ORDER BY timestamp DESC LIMIT ?";
+    params.push(limit);
+
+    const result = await env.DB.prepare(query).bind(...params).all();
+    return json({ signals: result.results ?? [] });
+  } catch (e) {
+    return error(e.message, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/trades
+// ─────────────────────────────────────────────────────────
+async function handleTrades(request, env) {
+  const url = new URL(request.url);
+  const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
+  const status = url.searchParams.get("status");
+
+  try {
+    let query = "SELECT * FROM trades";
+    if (status === "open") query += " WHERE closed = 0";
+    else if (status === "closed") query += " WHERE closed = 1";
+    query += ` ORDER BY opened_at DESC LIMIT ?`;
+
+    const result = await env.DB.prepare(query).bind(limit).all();
+    return json({ trades: result.results ?? [] });
+  } catch (e) {
+    return error(e.message, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/equity — Equity curve
+// ─────────────────────────────────────────────────────────
+async function handleEquity(request, env) {
+  const url = new URL(request.url);
+  const days = Math.min(parseInt(url.searchParams.get("days")) || 30, 365);
+
+  try {
+    const result = await env.DB.prepare(
+      `SELECT date, start_balance, end_balance, peak_balance, total_pnl, trades_count
+       FROM daily_snapshots
+       WHERE date >= date('now','-' || ? || ' days')
+       ORDER BY date ASC`
+    )
+      .bind(days)
+      .all();
+
+    return json({ equity: result.results ?? [] });
+  } catch (e) {
+    return error(e.message, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/tiers — Performance per tier
+// ─────────────────────────────────────────────────────────
+async function handleTiers(env) {
+  try {
+    const result = await env.DB.prepare(
+      `SELECT
+        tier,
+        COUNT(*) AS count,
+        SUM(CASE WHEN outcome IN ('TP1','TP2') THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN outcome = 'SL' THEN 1 ELSE 0 END) AS losses,
+        COALESCE(SUM(outcome_pnl),0) AS total_pnl,
+        COALESCE(AVG(score),0) AS avg_score
+      FROM signals
+      WHERE timestamp >= datetime('now','-30 days')
+        AND outcome IS NOT NULL
+      GROUP BY tier
+      ORDER BY 
+        CASE tier
+          WHEN 'KILLER' THEN 1
+          WHEN 'STRONG' THEN 2
+          WHEN 'MODERATE' THEN 3
+          WHEN 'WEAK' THEN 4
+          ELSE 5
+        END`
+    ).all();
+
+    const tiers = (result.results ?? []).map((t) => ({
+      ...t,
+      win_rate:
+        t.wins + t.losses > 0
+          ? Math.round((t.wins / (t.wins + t.losses)) * 1000) / 10
+          : 0,
+    }));
+
+    return json({ tiers });
+  } catch (e) {
+    return error(e.message, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/status
+// ─────────────────────────────────────────────────────────
+async function handleStatus(env) {
+  try {
+    const status = await env.DB.prepare(
+      "SELECT * FROM system_status WHERE id = 1"
+    ).first();
+    return json({ status: status ?? {} });
+  } catch (e) {
+    return error(e.message, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  GET /api/distribution — Outcome distribution
+// ─────────────────────────────────────────────────────────
+async function handleDistribution(env) {
+  try {
+    const result = await env.DB.prepare(
+      `SELECT 
+        COALESCE(outcome,'pending') AS outcome,
+        COUNT(*) AS count
+      FROM signals
+      WHERE timestamp >= datetime('now','-30 days')
+      GROUP BY outcome`
+    ).all();
+
+    return json({ distribution: result.results ?? [] });
+  } catch (e) {
+    return error(e.message, 500);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  ROUTER
+// ─────────────────────────────────────────────────────────
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders() });
+      return new Response(null, { headers: CORS_HEADERS });
     }
 
     const url = new URL(request.url);
     const path = url.pathname;
 
     try {
-      // ─── SIGNAL ────────────────────────────────────────────
-      if (path === "/signal" && request.method === "POST") {
-        const d = await request.json();
-        if (!d.type || typeof d.entry !== "number") {
-          return json({ error: "invalid signal" }, 400);
-        }
-        const result = await env.DB.prepare(`
-          INSERT INTO signals (type, entry, sl, tp, score, mode, voters, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          d.type, d.entry, d.sl || 0, d.tp || 0,
-          d.score || 0, d.mode || "", d.voters || "",
-          d.timestamp || Date.now()
-        ).run();
-        return json({ status: "ok", id: result.meta.last_row_id });
+      if (path === "/sync" && request.method === "POST") {
+        return await handleSync(request, env);
       }
 
-      // ─── ACCOUNT POST ──────────────────────────────────────
-      if (path === "/account" && request.method === "POST") {
-        const d = await request.json();
-        if (typeof d.balance !== "number") {
-          return json({ error: "invalid account" }, 400);
-        }
-        await env.DB.prepare(`
-          INSERT INTO account (balance, equity, profit, timestamp)
-          VALUES (?, ?, ?, ?)
-        `).bind(
-          d.balance, d.equity || 0, d.profit || 0, d.timestamp || Date.now()
-        ).run();
-        return json({ status: "ok" });
-      }
+      if (path === "/api/overview") return await handleOverview(env);
+      if (path === "/api/signals") return await handleSignals(request, env);
+      if (path === "/api/trades") return await handleTrades(request, env);
+      if (path === "/api/equity") return await handleEquity(request, env);
+      if (path === "/api/tiers") return await handleTiers(env);
+      if (path === "/api/status") return await handleStatus(env);
+      if (path === "/api/distribution") return await handleDistribution(env);
 
-      // ─── ACCOUNT GET ───────────────────────────────────────
-      if (path === "/account") {
-        const data = await env.DB.prepare(`
-          SELECT * FROM account ORDER BY id DESC LIMIT 1
-        `).first();
-        return json(data || {});
-      }
-
-      // ─── TRADE OPEN ────────────────────────────────────────
-      if (path === "/trade" && request.method === "POST") {
-        const d = await request.json();
-        if (!d.type || typeof d.entry !== "number") {
-          return json({ error: "invalid trade" }, 400);
-        }
-        const result = await env.DB.prepare(`
-          INSERT INTO trades 
-            (ticket, type, entry, sl, tp, lot, mode, voters, prob, status, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          d.ticket || null, d.type, d.entry, d.sl || 0, d.tp || 0,
-          d.lot || 0.01, d.mode || "", d.voters || "",
-          d.prob || 0, "open", d.time || Date.now()
-        ).run();
-        return json({ status: "ok", trade_id: result.meta.last_row_id });
-      }
-
-      // ─── CLOSE TRADE ───────────────────────────────────────
-      if (path === "/close" && request.method === "POST") {
-        const d = await request.json();
-        if (typeof d.profit !== "number") {
-          return json({ error: "invalid profit" }, 400);
-        }
-
-        // Dedup check: kalau trade_id sudah ada di closes dalam 5 menit terakhir,
-        // skip insert (avoid duplicate close records dari restart bot)
-        if (d.trade_id) {
-          const recentCutoff = (d.time || Date.now()) - 5 * 60 * 1000;
-          const dup = await env.DB.prepare(`
-            SELECT id FROM closes 
-            WHERE trade_id = ? AND timestamp > ? 
-            LIMIT 1
-          `).bind(d.trade_id, recentCutoff).first();
-          if (dup) {
-            return json({ status: "ok", duplicate: true });
-          }
-        }
-
-        // Insert close record
-        await env.DB.prepare(`
-          INSERT INTO closes (trade_id, ticket, exit_price, profit, reason, session, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          d.trade_id || null, d.trade_id || null, d.exit || 0,
-          d.profit, d.reason || "", d.session || "UNKNOWN",
-          d.time || Date.now()
-        ).run();
-
-        // Update trades.status & exit info kalau ticket match
-        if (d.trade_id) {
-          await env.DB.prepare(`
-            UPDATE trades 
-            SET status = 'closed', exit_price = ?, profit = ?, close_reason = ?, close_time = ?
-            WHERE ticket = ?
-          `).bind(
-            d.exit || 0, d.profit, d.reason || "", d.time || Date.now(),
-            d.trade_id
-          ).run();
-        }
-
-        return json({ status: "ok" });
-      }
-
-      // ─── HEARTBEAT POST ────────────────────────────────────
-      if (path === "/heartbeat" && request.method === "POST") {
-        const d = await request.json();
-        await env.DB.prepare(`
-          INSERT INTO heartbeats (status, mode, wins, losses, consecutive_losses, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).bind(
-          d.status || "running",
-          d.mode || "",
-          d.wins || 0,
-          d.losses || 0,
-          d.consecutive_losses || 0,
-          d.timestamp || Date.now()
-        ).run();
-        return json({ status: "ok" });
-      }
-
-      // ─── HEARTBEAT GET ─────────────────────────────────────
-      if (path === "/heartbeat") {
-        const data = await env.DB.prepare(`
-          SELECT * FROM heartbeats ORDER BY id DESC LIMIT 1
-        `).first();
-        // Detect stale (> 3 minutes = bot mungkin offline)
-        if (data) {
-          const age_sec = (Date.now() - data.timestamp) / 1000;
-          data.age_seconds = Math.round(age_sec);
-          data.is_alive = age_sec < 180;
-        }
-        return json(data || { is_alive: false, status: "offline" });
-      }
-
-      // ─── EVENT ─────────────────────────────────────────────
-      if (path === "/event" && request.method === "POST") {
-        const d = await request.json();
-        await env.DB.prepare(`
-          INSERT INTO events (type, message, data, timestamp)
-          VALUES (?, ?, ?, ?)
-        `).bind(
-          d.type || "info",
-          d.message || "",
-          JSON.stringify(d.data || {}),
-          d.timestamp || Date.now()
-        ).run();
-        return json({ status: "ok" });
-      }
-
-      if (path === "/events") {
-        const limit = parseInt(url.searchParams.get("limit") || "50");
-        const data = await env.DB.prepare(`
-          SELECT * FROM events ORDER BY id DESC LIMIT ?
-        `).bind(limit).all();
-        const results = (data.results || []).map(r => ({
-          ...r,
-          data: r.data ? JSON.parse(r.data) : {},
-        }));
-        return json(results);
-      }
-
-      // ─── LOG STREAMING ─────────────────────────────────────
-      // Receive log lines from bot for live monitoring
-      if (path === "/log" && request.method === "POST") {
-        const d = await request.json();
-        await env.DB.prepare(`
-          INSERT INTO logs (level, logger, message, timestamp)
-          VALUES (?, ?, ?, ?)
-        `).bind(
-          d.level || "INFO",
-          d.logger || "",
-          (d.message || "").substring(0, 1000),  // safety truncate
-          d.timestamp || Date.now()
-        ).run();
-        return json({ status: "ok" });
-      }
-
-      // GET logs (with optional level filter)
-      if (path === "/logs") {
-        const limit = parseInt(url.searchParams.get("limit") || "200");
-        const level = url.searchParams.get("level");  // optional filter
-        let query = `SELECT * FROM logs`;
-        const args = [];
-        if (level) {
-          query += ` WHERE level = ?`;
-          args.push(level);
-        }
-        query += ` ORDER BY id DESC LIMIT ?`;
-        args.push(limit);
-        const data = await env.DB.prepare(query).bind(...args).all();
-        return json(data.results || []);
-      }
-
-      // Cleanup old logs (called manually atau oleh cron worker terpisah)
-      if (path === "/logs/cleanup" && request.method === "POST") {
-        const cutoff = Date.now() - (24 * 60 * 60 * 1000);  // 24h ago
-        const result = await env.DB.prepare(`
-          DELETE FROM logs WHERE timestamp < ?
-        `).bind(cutoff).run();
-        return json({ status: "ok", deleted: result.meta.changes });
-      }
-
-      // ─── CLOSES (existing - improved) ─────────────────────
-      if (path === "/closes") {
-        const limit = parseInt(url.searchParams.get("limit") || "200");
-        const data = await env.DB.prepare(`
-          SELECT 
-            id, trade_id, ticket, exit_price, profit, reason, session,
-            timestamp as time
-          FROM closes
-          ORDER BY id DESC
-          LIMIT ?
-        `).bind(limit).all();
-        return json(data.results || []);
-      }
-
-      // ─── TRADES (all) ──────────────────────────────────────
-      if (path === "/trades") {
-        const limit = parseInt(url.searchParams.get("limit") || "100");
-        const data = await env.DB.prepare(`
-          SELECT * FROM trades ORDER BY id DESC LIMIT ?
-        `).bind(limit).all();
-        return json(data.results || []);
-      }
-
-      // ─── TRADES OPEN (currently active) ────────────────────
-      // Exclude trades yang sebenarnya sudah di-close (ada di closes table)
-      // Ini fix untuk "stuck position" yang tidak update status='closed'
-      if (path === "/trades/open") {
-        const data = await env.DB.prepare(`
-          SELECT * FROM trades 
-          WHERE status = 'open' 
-          AND ticket NOT IN (
-            SELECT trade_id FROM closes WHERE trade_id IS NOT NULL
-          )
-          ORDER BY timestamp DESC
-        `).all();
-        return json(data.results || []);
-      }
-
-      // ─── ADMIN: RECONCILE (fix stuck open trades) ──────────
-      // Auto-mark trades sebagai 'closed' kalau ada close record
-      if (path === "/admin/reconcile" && request.method === "POST") {
-        const result = await env.DB.prepare(`
-          UPDATE trades 
-          SET status = 'closed' 
-          WHERE status = 'open' 
-          AND ticket IN (SELECT trade_id FROM closes WHERE trade_id IS NOT NULL)
-        `).run();
-        return json({ status: "ok", reconciled: result.meta.changes });
-      }
-
-      // ─── ADMIN: FORCE CLOSE STUCK (cleanup tanpa close record) ─
-      // Mark semua open trade > 24h sebagai closed (orphaned)
-      if (path === "/admin/cleanup_stuck" && request.method === "POST") {
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-        const result = await env.DB.prepare(`
-          UPDATE trades 
-          SET status = 'closed', close_reason = 'orphaned_cleanup', close_time = ?
-          WHERE status = 'open' AND timestamp < ?
-        `).bind(Date.now(), cutoff).run();
-        return json({ status: "ok", cleaned: result.meta.changes });
-      }
-
-      // ─── MODES (per-mode stats) ────────────────────────────
-      if (path === "/modes") {
-        const data = await env.DB.prepare(`
-          SELECT 
-            mode,
-            COUNT(*) as total,
-            SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN profit <= 0 THEN 1 ELSE 0 END) as losses,
-            SUM(profit) as total_profit,
-            AVG(profit) as avg_profit
-          FROM trades
-          WHERE status = 'closed' AND mode != ''
-          GROUP BY mode
-        `).all();
-        return json(data.results || []);
-      }
-
-      // ─── STATS (improved with per-mode) ────────────────────
-      if (path === "/stats") {
-        const total = await env.DB.prepare(
-          `SELECT COUNT(*) as total FROM trades`
-        ).first();
-        const win = await env.DB.prepare(
-          `SELECT COUNT(*) as win FROM closes WHERE profit > 0`
-        ).first();
-        const loss = await env.DB.prepare(
-          `SELECT COUNT(*) as loss FROM closes WHERE profit <= 0`
-        ).first();
-        const profit = await env.DB.prepare(
-          `SELECT SUM(profit) as total_profit FROM closes`
-        ).first();
-
+      if (path === "/" || path === "/health") {
         return json({
-          total: total?.total || 0,
-          win: win?.win || 0,
-          loss: loss?.loss || 0,
-          profit: profit?.total_profit || 0,
+          ok: true,
+          service: "XAUUSD AI Signal Engine API",
+          version: "1.0.0",
+          timestamp: new Date().toISOString(),
         });
       }
 
-      // ─── SUMMARY (everything in one call) ──────────────────
-      if (path === "/summary") {
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayMs = todayStart.getTime();
-
-        // Heartbeat
-        const hb = await env.DB.prepare(
-          `SELECT * FROM heartbeats ORDER BY id DESC LIMIT 1`
-        ).first();
-        const hb_age = hb ? (Date.now() - hb.timestamp) / 1000 : 999;
-
-        // Account
-        const account = await env.DB.prepare(
-          `SELECT * FROM account ORDER BY id DESC LIMIT 1`
-        ).first();
-
-        // Today's stats
-        const today = await env.DB.prepare(`
-          SELECT
-            COUNT(*) as trades,
-            SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN profit <= 0 THEN 1 ELSE 0 END) as losses,
-            SUM(profit) as profit
-          FROM closes WHERE timestamp >= ?
-        `).bind(todayMs).first();
-
-        // All-time stats
-        const all = await env.DB.prepare(`
-          SELECT
-            COUNT(*) as trades,
-            SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
-            SUM(CASE WHEN profit <= 0 THEN 1 ELSE 0 END) as losses,
-            SUM(profit) as profit
-          FROM closes
-        `).first();
-
-        // Open positions
-        const openPos = await env.DB.prepare(`
-          SELECT COUNT(*) as count FROM trades WHERE status = 'open'
-        `).first();
-
-        // Per-mode
-        const modes = await env.DB.prepare(`
-          SELECT mode, COUNT(*) as total,
-                 SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
-                 SUM(profit) as profit
-          FROM trades WHERE status = 'closed' AND mode != ''
-          GROUP BY mode
-        `).all();
-
-        // Recent events
-        const events = await env.DB.prepare(`
-          SELECT * FROM events ORDER BY id DESC LIMIT 5
-        `).all();
-
-        return json({
-          status: {
-            is_alive: hb_age < 180,
-            status: hb?.status || "offline",
-            mode: hb?.mode || "",
-            age_seconds: Math.round(hb_age),
-            consecutive_losses: hb?.consecutive_losses || 0,
-          },
-          account: account || {},
-          today: {
-            trades: today?.trades || 0,
-            wins: today?.wins || 0,
-            losses: today?.losses || 0,
-            profit: today?.profit || 0,
-          },
-          all_time: {
-            trades: all?.trades || 0,
-            wins: all?.wins || 0,
-            losses: all?.losses || 0,
-            profit: all?.profit || 0,
-          },
-          open_positions: openPos?.count || 0,
-          modes: modes.results || [],
-          recent_events: (events.results || []).map(e => ({
-            ...e,
-            data: e.data ? JSON.parse(e.data) : {},
-          })),
-        });
-      }
-
-      // ─── HEALTH CHECK ──────────────────────────────────────
-      if (path === "/health") {
-        return json({ status: "ok", time: Date.now() });
-      }
-
-      return json({ error: "Not found", path }, 404);
+      return error("Not found", 404);
     } catch (e) {
-      return json({ error: e.message, stack: e.stack }, 500);
+      console.error("Router error:", e.message);
+      return error(`Server error: ${e.message}`, 500);
     }
   },
 };
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: corsHeaders(),
-  });
-}
-
-function corsHeaders() {
-  return {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  };
-}
-
