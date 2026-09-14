@@ -83,7 +83,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/>
             </svg>
-            Sisa / Buffer Bulan Ini
+            Sisa Berjalan
           </div>
           <div class="hero-value" id="bufferValue">0</div>
           <div class="hero-meta" id="bufferMeta"><span>—</span></div>
@@ -115,6 +115,13 @@
 
     <!-- ═══ STATS ═══ -->
     <div class="stats">
+      <div class="stat gold reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12h13"/><path d="m12 8 4 4-4 4"/><path d="M20 4v16"/></svg></div>
+        <div class="stat-label">Bawaan Bulan Lalu</div>
+        <div class="stat-value" id="sCarry">—</div>
+        <div class="stat-meta" id="sCarryMeta">—</div>
+      </div>
+
       <div class="stat violet reveal">
         <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
         <div class="stat-label">Cicilan Bulan Ini</div>
@@ -176,7 +183,7 @@
         <div class="chart-head">
           <div class="chart-title">
             <h3>Arus 6 Bulan</h3>
-            <p id="trendSub">pemasukan vs pengeluaran · garis emas = sisa</p>
+            <p id="trendSub">garis emas = sisa berjalan (termasuk bawaan)</p>
           </div>
         </div>
         <div class="chart-canvas" style="height:300px"><canvas id="trendChart"></canvas></div>
@@ -414,7 +421,7 @@
 <!-- ═══ MODAL: SETTINGS ═══ -->
 <div class="overlay" id="settingsOverlay">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setTitle">
-    <div class="modal-head"><h3 id="setTitle">Pengaturan</h3><p>Mata uang untuk halaman keuangan. Jurnal trading tetap terpisah.</p></div>
+    <div class="modal-head"><h3 id="setTitle">Pengaturan</h3><p>Mata uang dan perilaku sisa saldo antar bulan.</p></div>
     <div class="modal-body">
       <div class="field">
         <label for="setCur">Mata Uang Keuangan</label>
@@ -422,6 +429,26 @@
           <option value="IDR">IDR — Rupiah</option>
           <option value="USD">USD — Dolar</option>
         </select>
+        <span class="field-hint">Jurnal trading tetap memakai mata uangnya sendiri.</span>
+      </div>
+      <div class="field">
+        <label for="setCarry">Bawa Sisa ke Bulan Berikutnya</label>
+        <select class="input" id="setCarry">
+          <option value="1">Ya — sisa jadi saldo awal bulan depan</option>
+          <option value="0">Tidak — tiap bulan mulai dari nol</option>
+        </select>
+        <span class="field-hint">Defisit juga ikut terbawa.</span>
+      </div>
+      <div class="field">
+        <label for="setCarryStart">Mulai Dihitung Dari</label>
+        <input class="input" type="month" id="setCarryStart">
+        <span class="field-hint">Kosongkan → otomatis dari bulan data paling awal.</span>
+      </div>
+      <div class="field">
+        <label for="setCarryOpen">Saldo Pembuka</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="setCarryOpen" step="1000" inputmode="decimal" placeholder="0"></div>
+        <span class="field-hint">Uang yang sudah ada di bulan awal tersebut.</span>
       </div>
     </div>
     <div class="modal-foot">
@@ -646,20 +673,28 @@
     const s = state.data.summary;
 
     const bv = $('bufferValue');
-    bv.textContent = money(s.buffer, true);
-    bv.style.webkitTextFillColor = s.buffer < 0 ? 'var(--red-bright)' : '';
-    bv.style.color = s.buffer < 0 ? 'var(--red-bright)' : '';
+    bv.textContent = money(s.net, true);
+    bv.style.webkitTextFillColor = s.net < 0 ? 'var(--red-bright)' : '';
+    bv.style.color = s.net < 0 ? 'var(--red-bright)' : '';
 
     const bm = $('bufferMeta');
-    bm.className = 'hero-meta ' + (s.buffer > 0 ? 'up' : s.buffer < 0 ? 'down' : '');
-    if (s.income_total <= 0) {
+    bm.className = 'hero-meta ' + (s.net > 0 ? 'up' : s.net < 0 ? 'down' : '');
+
+    const parts = [];
+    if (s.carry_enabled && s.carry_in !== 0) {
+      parts.push('bawaan ' + money(s.carry_in, true) + ' + bulan ini ' + money(s.buffer, true));
+    } else if (s.income_total > 0) {
+      parts.push(num(s.net_pct) + '% dari ' + money(s.available));
+    }
+    if (s.net > 0) parts.push(money(s.daily_allowance) + '/hari · ' + s.days_left + ' hari');
+
+    if (s.income_total <= 0 && s.carry_in === 0) {
       bm.innerHTML = '<span>belum ada pemasukan bulan ini</span>';
-    } else if (s.buffer < 0) {
-      bm.innerHTML = '<span class="meta-badge">!</span><span>defisit ' + num(Math.abs(s.buffer_pct)) +
-        '% dari pemasukan</span>';
+    } else if (s.net < 0) {
+      bm.innerHTML = '<span class="meta-badge">!</span><span>defisit · ' +
+        (parts[0] || money(s.net)) + '</span>';
     } else {
-      bm.innerHTML = '<span class="meta-badge">↑</span><span>' + num(s.buffer_pct) + '% tersisa · ' +
-        money(s.daily_allowance) + '/hari untuk ' + s.days_left + ' hari</span>';
+      bm.innerHTML = '<span class="meta-badge">↑</span><span>' + parts.join(' · ') + '</span>';
     }
 
     $('incomeValue').textContent = money(s.income_total);
@@ -677,6 +712,19 @@
   function renderStats() {
     const s = state.data.summary;
     const d = state.data.debt_overview;
+
+    const carryEl = $('sCarry');
+    if (s.carry_enabled) {
+      carryEl.textContent = money(s.carry_in, true);
+      carryEl.className = 'stat-value ' + toneClass(s.carry_in);
+      $('sCarryMeta').textContent = s.carry_in === 0
+        ? 'mulai dihitung ' + monthLabel(s.carry_start_month, true)
+        : 'sisa murni bulan ini ' + money(s.buffer, true);
+    } else {
+      carryEl.textContent = 'nonaktif';
+      carryEl.className = 'stat-value text-ter';
+      $('sCarryMeta').textContent = 'aktifkan di pengaturan';
+    }
 
     $('sInstallment').textContent = money(s.installment_total);
     $('sInstallmentMeta').textContent = s.installment_total > 0
@@ -715,20 +763,22 @@
   // ── ALOKASI ──
   function renderAlloc() {
     const s = state.data.summary;
-    const income = s.income_total;
+    const available = s.available;
     const segs = [
       { k: 'debt', label: 'Cicilan', value: s.installment_total },
       { k: 'fixed', label: 'Rutin', value: s.expense_rutin },
       { k: 'var', label: 'Lain-lain', value: s.expense_sekali }
     ];
 
-    if (s.buffer >= 0) segs.push({ k: 'buffer', label: 'Sisa', value: s.buffer });
-    else segs.push({ k: 'over', label: 'Defisit', value: Math.abs(s.buffer) });
+    if (s.net >= 0) segs.push({ k: 'buffer', label: 'Sisa', value: s.net });
+    else segs.push({ k: 'over', label: 'Defisit', value: Math.abs(s.net) });
 
-    const base = income > 0 ? Math.max(income, s.outflow_total) : s.outflow_total;
-    $('allocSub').textContent = income > 0
-      ? 'dari pemasukan ' + money(income) + ' · ' + monthLabel(state.month)
-      : 'belum ada pemasukan · menampilkan proporsi pengeluaran';
+    const base = available > 0 ? Math.max(available, s.outflow_total) : s.outflow_total;
+    $('allocSub').textContent = available > 0
+      ? 'dari ' + money(available) + (s.carry_enabled && s.carry_in !== 0
+          ? ' (bawaan ' + money(s.carry_in, true) + ' + masuk ' + money(s.income_total) + ')'
+          : ' · ' + monthLabel(state.month))
+      : 'belum ada dana masuk · menampilkan proporsi pengeluaran';
 
     $('allocBar').innerHTML = segs.filter((x) => x.value > 0).map((x) =>
       '<div class="alloc-seg ' + x.k + '" data-w="' + (base > 0 ? (x.value / base) * 100 : 0) +
@@ -765,9 +815,12 @@
           { type: 'bar', label: 'Pengeluaran', data: rows.map((r) => r.outflow),
             backgroundColor: 'rgba(239,68,68,.5)', hoverBackgroundColor: 'rgba(249,128,128,.82)',
             borderRadius: 4, maxBarThickness: 26, order: 2 },
-          { type: 'line', label: 'Sisa', data: rows.map((r) => r.buffer),
+          { type: 'line', label: 'Sisa berjalan', data: rows.map((r) => r.net),
             borderColor: '#e3b341', backgroundColor: '#f5c659', borderWidth: 2.5, tension: .35,
-            pointRadius: 3.5, pointHoverRadius: 6, pointBorderColor: '#0a0d14', pointBorderWidth: 2, order: 1 }
+            pointRadius: 3.5, pointHoverRadius: 6, pointBorderColor: '#0a0d14', pointBorderWidth: 2, order: 0 },
+          { type: 'line', label: 'Sisa bulan itu', data: rows.map((r) => r.buffer),
+            borderColor: '#7b8494', borderWidth: 1.5, borderDash: [5, 4], tension: .35,
+            pointRadius: 0, pointHoverRadius: 5, order: 1 }
         ]
       },
       options: {
@@ -1245,6 +1298,9 @@
 
   $('settingsBtn').addEventListener('click', () => {
     $('setCur').value = state.settings.finance_currency || 'IDR';
+    $('setCarry').value = String(Number(state.settings.carry_over) !== 0 ? 1 : 0);
+    $('setCarryStart').value = state.settings.carry_start_month || '';
+    $('setCarryOpen').value = state.settings.carry_opening || '';
     openModal('settingsOverlay');
   });
 
@@ -1252,7 +1308,12 @@
     const btn = $('setSave');
     btn.classList.add('loading'); btn.disabled = true;
     try {
-      await post('/api/settings', { finance_currency: $('setCur').value });
+      await post('/api/settings', {
+        finance_currency: $('setCur').value,
+        carry_over: Number($('setCarry').value),
+        carry_start_month: $('setCarryStart').value || '',
+        carry_opening: parseFloat($('setCarryOpen').value) || 0
+      });
       closeModal('settingsOverlay');
       toast('Pengaturan tersimpan', 'success');
       await load(true);
@@ -1275,3 +1336,4 @@
 </script>
 </body>
 </html>
+
