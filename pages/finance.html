@@ -440,6 +440,14 @@
         <span class="field-hint">Defisit juga ikut terbawa.</span>
       </div>
       <div class="field">
+        <label for="setAutoPay">Cicilan Bulan Lampau</label>
+        <select class="input" id="setAutoPay">
+          <option value="1">Anggap sudah dibayar otomatis</option>
+          <option value="0">Tandai manual satu per satu</option>
+        </select>
+        <span class="field-hint">Hanya untuk bulan sebelum bulan berjalan, dan hanya sejak bulan mulai cicil.</span>
+      </div>
+      <div class="field">
         <label for="setCarryStart">Mulai Dihitung Dari</label>
         <input class="input" type="month" id="setCarryStart">
         <span class="field-hint">Kosongkan → otomatis dari bulan data paling awal.</span>
@@ -911,8 +919,10 @@
   function renderDebts() {
     const debts = state.data.debts || [];
     const ov = state.data.debt_overview;
+    const autoCount = debts.reduce((a, d) => a + (d.auto_paid_count || 0), 0);
     $('debtMeta').textContent = debts.length
-      ? money(ov.total_remaining) + ' sisa · ' + ov.active_count + ' aktif'
+      ? money(ov.total_remaining) + ' sisa · ' + ov.active_count + ' aktif' +
+        (autoCount ? ' · ' + autoCount + ' cicilan lampau otomatis' : '')
       : '—';
 
     if (!debts.length) return;
@@ -920,15 +930,21 @@
     const cards = debts.map((d) => {
       const lunas = d.status === 'lunas';
       let chipCls = 'due-chip', chipTxt;
+      const pastMonth = state.month < state.today.slice(0, 7);
       if (lunas) { chipCls += ' paid'; chipTxt = 'selesai'; }
-      else if (d.paid_this_month) { chipCls += ' paid'; chipTxt = 'dibayar bulan ini'; }
+      else if (d.paid_this_month) {
+        chipCls += ' paid';
+        chipTxt = d.paid_auto_this_month ? 'terbayar · otomatis' : (pastMonth ? 'terbayar' : 'dibayar bulan ini');
+      }
+      else if (d.skipped_this_month) { chipCls += ' late'; chipTxt = 'ditandai belum bayar'; }
       else if (!d.active_this_month) { chipTxt = 'belum mulai'; }
       else if (d.days_to_due < 0) { chipCls += ' late'; chipTxt = 'telat ' + Math.abs(d.days_to_due) + ' hari'; }
       else if (d.days_to_due <= 5) { chipCls += ' soon'; chipTxt = d.days_to_due === 0 ? 'jatuh tempo hari ini' : d.days_to_due + ' hari lagi'; }
       else { chipTxt = 'tempo ' + fmtDate(d.due_date_this_month); }
 
       const payBtn = lunas ? '' : d.paid_this_month
-        ? '<button class="mini-btn" data-unpay="' + d.id + '" aria-label="Batalkan pembayaran">' +
+        ? '<button class="mini-btn" data-unpay="' + d.id + '" title="' +
+          (pastMonth ? 'Tandai belum dibayar' : 'Batalkan penandaan') + '" aria-label="Tandai belum dibayar">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg></button>'
         : '<button class="mini-btn" data-pay="' + d.id + '" aria-label="Tandai cicilan bulan ini dibayar" title="Tandai dibayar">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></button>';
@@ -1135,8 +1151,10 @@
 
   async function unpayDebt(id) {
     try {
-      await api('/api/finance/debt/pay?debt_id=' + id + '&month=' + state.month, { method: 'DELETE' });
-      toast('Pembayaran dibatalkan', 'info');
+      const r = await api('/api/finance/debt/pay?debt_id=' + id + '&month=' + state.month, { method: 'DELETE' });
+      toast(r && r.marked === 'belum_bayar'
+        ? 'Ditandai belum dibayar — tidak akan terisi otomatis lagi'
+        : 'Pembayaran dibatalkan', 'info');
       await load(true);
     } catch (e) { toast(e.message, 'error'); }
   }
@@ -1299,6 +1317,7 @@
   $('settingsBtn').addEventListener('click', () => {
     $('setCur').value = state.settings.finance_currency || 'IDR';
     $('setCarry').value = String(Number(state.settings.carry_over) !== 0 ? 1 : 0);
+    $('setAutoPay').value = String(Number(state.settings.auto_pay_past) !== 0 ? 1 : 0);
     $('setCarryStart').value = state.settings.carry_start_month || '';
     $('setCarryOpen').value = state.settings.carry_opening || '';
     openModal('settingsOverlay');
@@ -1311,6 +1330,7 @@
       await post('/api/settings', {
         finance_currency: $('setCur').value,
         carry_over: Number($('setCarry').value),
+        auto_pay_past: Number($('setAutoPay').value),
         carry_start_month: $('setCarryStart').value || '',
         carry_opening: parseFloat($('setCarryOpen').value) || 0
       });
@@ -1336,4 +1356,3 @@
 </script>
 </body>
 </html>
-
