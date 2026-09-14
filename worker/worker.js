@@ -67,13 +67,14 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ─────────────────────────────────────────────────────────
 //  SETTINGS
 // ─────────────────────────────────────────────────────────
-const SETTING_KEYS = ["initial_capital", "monthly_target", "currency"];
+const SETTING_KEYS = ["initial_capital", "monthly_target", "currency", "finance_currency"];
+const STRING_SETTINGS = ["currency", "finance_currency"];
 
 async function readSettings(env) {
   const res = await env.DB.prepare("SELECT key, value FROM settings").all();
-  const out = { initial_capital: 0, monthly_target: 0, currency: "USD" };
+  const out = { initial_capital: 0, monthly_target: 0, currency: "USD", finance_currency: "IDR" };
   for (const row of res.results ?? []) {
-    if (row.key === "currency") out.currency = row.value;
+    if (STRING_SETTINGS.includes(row.key)) out[row.key] = row.value;
     else out[row.key] = Number(row.value) || 0;
   }
   return out;
@@ -91,12 +92,12 @@ async function handleSettingsPost(request, env) {
   for (const key of SETTING_KEYS) {
     if (body[key] === undefined || body[key] === null) continue;
     let value = body[key];
-    if (key !== "currency") {
+    if (STRING_SETTINGS.includes(key)) {
+      value = String(value).slice(0, 8).toUpperCase();
+    } else {
       const num = Number(value);
       if (!isFinite(num) || num < 0) return fail(`Nilai ${key} tidak valid`);
       value = String(num);
-    } else {
-      value = String(value).slice(0, 8).toUpperCase();
     }
     writes.push(
       env.DB.prepare(
@@ -402,6 +403,428 @@ async function handleSummary(request, env) {
   });
 }
 
+// ═════════════════════════════════════════════════════════
+//  MODUL KEUANGAN — pemasukan, hutang, pengeluaran
+// ═════════════════════════════════════════════════════════
+const MONTH_RE = /^\d{4}-\d{2}$/;
+const isValidMonth = (m) => MONTH_RE.test(m) && Number(m.slice(5, 7)) >= 1 && Number(m.slice(5, 7)) <= 12;
+
+const INCOME_CATS = ["gaji", "bonus", "freelance", "trading", "lainnya"];
+const EXPENSE_CATS = ["tagihan", "transport", "makan", "keluarga", "cicilan", "lainnya"];
+
+function daysInMonth(month) {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+function monthShift(month, delta) {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1 + delta, 1)).toISOString().slice(0, 7);
+}
+
+/** Tanggal jatuh tempo pada bulan tertentu, di-clamp ke jumlah hari bulan itu */
+function dueDateIn(month, day) {
+  const dim = daysInMonth(month);
+  const d = Math.min(Math.max(Number(day) || 1, 1), dim);
+  return month + "-" + String(d).padStart(2, "0");
+}
+
+const daysBetween = (from, to) =>
+  Math.round((toUTC(to).getTime() - toUTC(from).getTime()) / 86400000);
+
+const expenseAppliesTo = (e, month) =>
+  e.type === "rutin"
+    ? (!e.start_month || e.start_month <= month) && (!e.end_month || e.end_month >= month)
+    : e.month === month;
+
+async function loadFinanceRaw(env) {
+  const [inc, debts, pays, exp, trading] = await Promise.all([
+    env.DB.prepare("SELECT * FROM incomes ORDER BY month DESC, id DESC").all(),
+    env.DB.prepare("SELECT * FROM debts ORDER BY id ASC").all(),
+    env.DB.prepare("SELECT * FROM debt_payments").all(),
+    env.DB.prepare("SELECT * FROM expenses ORDER BY id ASC").all(),
+    env.DB.prepare(
+      `SELECT substr(date,1,7) AS month,
+              COALESCE(SUM(end_balance - start_balance),0) AS pnl,
+              COUNT(*) AS days
+         FROM daily_entries GROUP BY substr(date,1,7)`
+    ).all(),
+  ]);
+
+  return {
+    incomes: inc.results ?? [],
+    debts: debts.results ?? [],
+    payments: pays.results ?? [],
+    expenses: exp.results ?? [],
+    trading: trading.results ?? [],
+  };
+}
+
+function buildFinance(raw, month, today) {
+  const paidByDebt = new Map();
+  const paidByKey = new Map();
+  for (const p of raw.payments) {
+    paidByDebt.set(p.debt_id, (paidByDebt.get(p.debt_id) || 0) + p.amount);
+    paidByKey.set(p.debt_id + "|" + p.month, p);
+  }
+
+  // ── Hutang diperkaya ──
+  const debts = raw.debts.map((d) => {
+    const paid = round2(paidByDebt.get(d.id) || 0);
+    const remaining = Math.max(round2(d.total_amount - paid), 0);
+    const lunas = d.status === "lunas" || remaining <= 0.009;
+    const dueThis = dueDateIn(month, d.due_day);
+    const paidThisMonth = paidByKey.has(d.id + "|" + month);
+    const activeThisMonth =
+      !lunas && (!d.start_month || d.start_month <= month) &&
+      (!d.final_due_date || d.final_due_date.slice(0, 7) >= month);
+
+    return {
+      id: d.id,
+      label: d.label,
+      total_amount: round2(d.total_amount),
+      monthly_installment: round2(d.monthly_installment),
+      due_day: d.due_day ?? null,
+      final_due_date: d.final_due_date ?? null,
+      start_month: d.start_month ?? null,
+      note: d.note ?? null,
+      status: lunas ? "lunas" : "aktif",
+      paid_amount: paid,
+      remaining,
+      progress_pct: d.total_amount > 0 ? round2((paid / d.total_amount) * 100) : 0,
+      months_left:
+        d.monthly_installment > 0 ? Math.ceil(remaining / d.monthly_installment) : null,
+      installments_paid: raw.payments.filter((p) => p.debt_id === d.id).length,
+      due_date_this_month: dueThis,
+      days_to_due: daysBetween(today, dueThis),
+      paid_this_month: paidThisMonth,
+      due_this_month: activeThisMonth ? round2(Math.min(d.monthly_installment, remaining)) : 0,
+      active_this_month: activeThisMonth,
+    };
+  });
+
+  // ── Agregat satu bulan ──
+  function agg(m) {
+    const income = raw.incomes
+      .filter((i) => i.month === m)
+      .reduce((a, i) => a + i.amount, 0);
+
+    const installment = debts.reduce((a, d) => {
+      if (d.status === "lunas") return a;
+      if (d.start_month && d.start_month > m) return a;
+      if (d.final_due_date && d.final_due_date.slice(0, 7) < m) return a;
+      return a + d.monthly_installment;
+    }, 0);
+
+    const applicable = raw.expenses.filter((e) => expenseAppliesTo(e, m));
+    const rutin = applicable.filter((e) => e.type === "rutin").reduce((a, e) => a + e.amount, 0);
+    const sekali = applicable.filter((e) => e.type !== "rutin").reduce((a, e) => a + e.amount, 0);
+    const outflow = installment + rutin + sekali;
+
+    return {
+      month: m,
+      income: round2(income),
+      installment: round2(installment),
+      expense_rutin: round2(rutin),
+      expense_sekali: round2(sekali),
+      expense_total: round2(rutin + sekali),
+      outflow: round2(outflow),
+      buffer: round2(income - outflow),
+    };
+  }
+
+  const cur = agg(month);
+  const incomes = raw.incomes.filter((i) => i.month === month);
+  const expenses = raw.expenses
+    .filter((e) => expenseAppliesTo(e, month))
+    .map((e) => ({
+      id: e.id,
+      label: e.label,
+      amount: round2(e.amount),
+      category: e.category || "lainnya",
+      type: e.type || "rutin",
+      month: e.month ?? null,
+      start_month: e.start_month ?? null,
+      end_month: e.end_month ?? null,
+      due_day: e.due_day ?? null,
+      note: e.note ?? null,
+    }));
+
+  // ── Pengeluaran per kategori (cicilan ikut sebagai satu kategori) ──
+  const byCat = new Map();
+  for (const e of expenses) byCat.set(e.category, round2((byCat.get(e.category) || 0) + e.amount));
+  const expense_by_category = Array.from(byCat, ([category, total]) => ({ category, total }))
+    .sort((a, b) => b.total - a.total);
+
+  // ── Sisa hari pada bulan berjalan ──
+  const dim = daysInMonth(month);
+  const isCurrentMonth = today.slice(0, 7) === month;
+  const daysLeft = isCurrentMonth
+    ? Math.max(dim - Number(today.slice(8, 10)) + 1, 1)
+    : dim;
+
+  const tradingRow = raw.trading.find((t) => t.month === month);
+  const activeDebts = debts.filter((d) => d.status === "aktif");
+  const upcoming = activeDebts
+    .filter((d) => d.active_this_month && !d.paid_this_month)
+    .sort((a, b) => a.due_date_this_month.localeCompare(b.due_date_this_month));
+
+  const trend = [];
+  for (let i = 5; i >= 0; i--) trend.push(agg(monthShift(month, -i)));
+
+  return {
+    month,
+    today,
+    summary: {
+      income_total: cur.income,
+      installment_total: cur.installment,
+      installment_paid: round2(
+        debts.filter((d) => d.paid_this_month).reduce((a, d) => a + d.monthly_installment, 0)
+      ),
+      installment_unpaid: round2(
+        debts
+          .filter((d) => d.active_this_month && !d.paid_this_month)
+          .reduce((a, d) => a + d.due_this_month, 0)
+      ),
+      expense_rutin: cur.expense_rutin,
+      expense_sekali: cur.expense_sekali,
+      expense_total: cur.expense_total,
+      outflow_total: cur.outflow,
+      buffer: cur.buffer,
+      buffer_pct: cur.income > 0 ? round2((cur.buffer / cur.income) * 100) : 0,
+      daily_allowance: round2(Math.max(cur.buffer, 0) / daysLeft),
+      days_left: daysLeft,
+      days_in_month: dim,
+      is_current_month: isCurrentMonth,
+      expense_by_category,
+      trading_pnl: round2(tradingRow ? tradingRow.pnl : 0),
+      trading_days: tradingRow ? tradingRow.days : 0,
+    },
+    debt_overview: {
+      total_amount: round2(activeDebts.reduce((a, d) => a + d.total_amount, 0)),
+      total_paid: round2(debts.reduce((a, d) => a + d.paid_amount, 0)),
+      total_remaining: round2(activeDebts.reduce((a, d) => a + d.remaining, 0)),
+      active_count: activeDebts.length,
+      lunas_count: debts.length - activeDebts.length,
+      next_due: upcoming.length
+        ? {
+            id: upcoming[0].id,
+            label: upcoming[0].label,
+            date: upcoming[0].due_date_this_month,
+            amount: upcoming[0].due_this_month,
+            days: upcoming[0].days_to_due,
+          }
+        : null,
+    },
+    incomes: incomes.map((i) => ({
+      id: i.id,
+      month: i.month,
+      label: i.label,
+      amount: round2(i.amount),
+      category: i.category || "lainnya",
+      note: i.note ?? null,
+    })),
+    debts,
+    expenses,
+    trend,
+  };
+}
+
+async function handleFinance(request, env) {
+  const url = new URL(request.url);
+  let month = url.searchParams.get("month") ?? "";
+  let today = url.searchParams.get("today") ?? "";
+  if (!isValidDate(today)) today = new Date().toISOString().slice(0, 10);
+  if (!isValidMonth(month)) month = today.slice(0, 7);
+
+  const [raw, settings] = await Promise.all([loadFinanceRaw(env), readSettings(env)]);
+  return json({ ok: true, settings, ...buildFinance(raw, month, today) });
+}
+
+// ── Pemasukan ──
+async function handleIncomePost(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const month = String(b.month ?? "").slice(0, 7);
+  if (!isValidMonth(month)) return fail("Bulan harus format YYYY-MM");
+  const label = String(b.label ?? "").trim().slice(0, 80);
+  if (!label) return fail("Label pemasukan wajib diisi");
+  const amount = Number(b.amount);
+  if (!isFinite(amount) || amount <= 0) return fail("Jumlah pemasukan tidak valid");
+  const category = INCOME_CATS.includes(b.category) ? b.category : "lainnya";
+  const note = b.note ? String(b.note).slice(0, 200) : null;
+
+  if (b.id) {
+    await env.DB.prepare(
+      `UPDATE incomes SET month=?, label=?, amount=?, category=?, note=? WHERE id=?`
+    ).bind(month, label, round2(amount), category, note, Number(b.id)).run();
+    return json({ ok: true, id: Number(b.id) });
+  }
+
+  const res = await env.DB.prepare(
+    `INSERT INTO incomes (month, label, amount, category, note) VALUES (?,?,?,?,?)`
+  ).bind(month, label, round2(amount), category, note).run();
+
+  return json({ ok: true, id: res.meta?.last_row_id ?? null });
+}
+
+// ── Hutang ──
+async function handleDebtPost(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const label = String(b.label ?? "").trim().slice(0, 80);
+  if (!label) return fail("Label hutang wajib diisi");
+  const total = Number(b.total_amount);
+  if (!isFinite(total) || total <= 0) return fail("Total hutang tidak valid");
+  const inst = Number(b.monthly_installment);
+  if (!isFinite(inst) || inst <= 0) return fail("Cicilan per bulan tidak valid");
+  if (inst > total) return fail("Cicilan per bulan melebihi total hutang");
+
+  const dueDay = b.due_day == null || b.due_day === "" ? null : Number(b.due_day);
+  if (dueDay !== null && (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31))
+    return fail("Tanggal jatuh tempo harus 1–31");
+
+  const finalDue = b.final_due_date ? String(b.final_due_date).slice(0, 10) : null;
+  if (finalDue && !isValidDate(finalDue)) return fail("Tanggal lunas harus YYYY-MM-DD");
+
+  const startMonth = b.start_month ? String(b.start_month).slice(0, 7) : null;
+  if (startMonth && !isValidMonth(startMonth)) return fail("Bulan mulai harus YYYY-MM");
+
+  const status = b.status === "lunas" ? "lunas" : "aktif";
+  const note = b.note ? String(b.note).slice(0, 200) : null;
+
+  if (b.id) {
+    await env.DB.prepare(
+      `UPDATE debts SET label=?, total_amount=?, monthly_installment=?, due_day=?,
+                        final_due_date=?, start_month=?, status=?, note=?,
+                        updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`
+    ).bind(label, round2(total), round2(inst), dueDay, finalDue, startMonth, status, note, Number(b.id)).run();
+    return json({ ok: true, id: Number(b.id) });
+  }
+
+  const res = await env.DB.prepare(
+    `INSERT INTO debts (label, total_amount, monthly_installment, due_day,
+                        final_due_date, start_month, status, note)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).bind(label, round2(total), round2(inst), dueDay, finalDue, startMonth, status, note).run();
+
+  return json({ ok: true, id: res.meta?.last_row_id ?? null });
+}
+
+async function handleDebtPay(request, env) {
+  if (request.method === "DELETE") {
+    const url = new URL(request.url);
+    const debtId = Number(url.searchParams.get("debt_id"));
+    const month = url.searchParams.get("month") ?? "";
+    if (!debtId || !isValidMonth(month)) return fail("debt_id dan month wajib diisi");
+    const res = await env.DB.prepare(
+      "DELETE FROM debt_payments WHERE debt_id = ? AND month = ?"
+    ).bind(debtId, month).run();
+    if (!(res.meta?.changes ?? 0)) return fail("Pembayaran tidak ditemukan", 404);
+    return json({ ok: true });
+  }
+
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const debtId = Number(b.debt_id);
+  const month = String(b.month ?? "").slice(0, 7);
+  if (!debtId) return fail("debt_id wajib diisi");
+  if (!isValidMonth(month)) return fail("Bulan harus format YYYY-MM");
+
+  const debt = await env.DB.prepare("SELECT * FROM debts WHERE id = ?").bind(debtId).first();
+  if (!debt) return fail("Hutang tidak ditemukan", 404);
+
+  let amount = Number(b.amount);
+  if (!isFinite(amount) || amount <= 0) amount = debt.monthly_installment;
+
+  await env.DB.prepare(
+    `INSERT INTO debt_payments (debt_id, month, amount) VALUES (?,?,?)
+     ON CONFLICT(debt_id, month) DO UPDATE SET amount = excluded.amount,
+                                               paid_at = CURRENT_TIMESTAMP`
+  ).bind(debtId, month, round2(amount)).run();
+
+  // Tandai lunas otomatis bila akumulasi pembayaran menutup total hutang
+  const sum = await env.DB.prepare(
+    "SELECT COALESCE(SUM(amount),0) AS paid FROM debt_payments WHERE debt_id = ?"
+  ).bind(debtId).first();
+
+  if ((sum?.paid ?? 0) >= debt.total_amount - 0.009) {
+    await env.DB.prepare(
+      "UPDATE debts SET status='lunas', updated_at=CURRENT_TIMESTAMP WHERE id=?"
+    ).bind(debtId).run();
+  }
+
+  return json({ ok: true, paid_total: round2(sum?.paid ?? 0) });
+}
+
+// ── Pengeluaran ──
+async function handleExpensePost(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const label = String(b.label ?? "").trim().slice(0, 80);
+  if (!label) return fail("Label pengeluaran wajib diisi");
+  const amount = Number(b.amount);
+  if (!isFinite(amount) || amount <= 0) return fail("Nominal pengeluaran tidak valid");
+
+  const type = b.type === "sekali" ? "sekali" : "rutin";
+  const category = EXPENSE_CATS.includes(b.category) ? b.category : "lainnya";
+
+  let month = null, startMonth = null, endMonth = null;
+  if (type === "sekali") {
+    month = String(b.month ?? "").slice(0, 7);
+    if (!isValidMonth(month)) return fail("Bulan pengeluaran harus YYYY-MM");
+  } else {
+    startMonth = b.start_month ? String(b.start_month).slice(0, 7) : null;
+    endMonth = b.end_month ? String(b.end_month).slice(0, 7) : null;
+    if (startMonth && !isValidMonth(startMonth)) return fail("Bulan mulai harus YYYY-MM");
+    if (endMonth && !isValidMonth(endMonth)) return fail("Bulan selesai harus YYYY-MM");
+    if (startMonth && endMonth && endMonth < startMonth)
+      return fail("Bulan selesai lebih awal dari bulan mulai");
+  }
+
+  const dueDay = b.due_day == null || b.due_day === "" ? null : Number(b.due_day);
+  if (dueDay !== null && (!Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31))
+    return fail("Tanggal tagihan harus 1–31");
+
+  const note = b.note ? String(b.note).slice(0, 200) : null;
+
+  if (b.id) {
+    await env.DB.prepare(
+      `UPDATE expenses SET label=?, amount=?, category=?, type=?, month=?,
+                           start_month=?, end_month=?, due_day=?, note=?
+        WHERE id=?`
+    ).bind(label, round2(amount), category, type, month, startMonth, endMonth, dueDay, note, Number(b.id)).run();
+    return json({ ok: true, id: Number(b.id) });
+  }
+
+  const res = await env.DB.prepare(
+    `INSERT INTO expenses (label, amount, category, type, month, start_month, end_month, due_day, note)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).bind(label, round2(amount), category, type, month, startMonth, endMonth, dueDay, note).run();
+
+  return json({ ok: true, id: res.meta?.last_row_id ?? null });
+}
+
+/** DELETE generik untuk incomes / debts / expenses */
+async function handleFinanceDelete(request, env, table) {
+  const url = new URL(request.url);
+  const id = Number(url.searchParams.get("id"));
+  if (!id) return fail("Parameter id wajib diisi");
+
+  if (table === "debts") {
+    await env.DB.prepare("DELETE FROM debt_payments WHERE debt_id = ?").bind(id).run();
+  }
+
+  const res = await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+  if (!(res.meta?.changes ?? 0)) return fail("Data tidak ditemukan", 404);
+  return json({ ok: true, deleted: id });
+}
+
 // ─────────────────────────────────────────────────────────
 //  ROUTER
 // ─────────────────────────────────────────────────────────
@@ -422,6 +845,31 @@ export default {
         if (method === "GET") return await handleEntriesGet(request, env);
         if (method === "POST") return await handleEntryPost(request, env);
         if (method === "DELETE") return await handleEntryDelete(request, env);
+        return fail("Method tidak didukung", 405);
+      }
+
+      if (path === "/api/finance" && method === "GET") return await handleFinance(request, env);
+
+      if (path === "/api/finance/income") {
+        if (method === "POST") return await handleIncomePost(request, env);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "incomes");
+        return fail("Method tidak didukung", 405);
+      }
+
+      if (path === "/api/finance/debt") {
+        if (method === "POST") return await handleDebtPost(request, env);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "debts");
+        return fail("Method tidak didukung", 405);
+      }
+
+      if (path === "/api/finance/debt/pay") {
+        if (method === "POST" || method === "DELETE") return await handleDebtPay(request, env);
+        return fail("Method tidak didukung", 405);
+      }
+
+      if (path === "/api/finance/expense") {
+        if (method === "POST") return await handleExpensePost(request, env);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "expenses");
         return fail("Method tidak didukung", 405);
       }
 
