@@ -1,411 +1,405 @@
 /**
  * ╔═══════════════════════════════════════════════════════════╗
- * ║  XAUUSD AI Signal Engine — Cloudflare Worker API          ║
+ * ║  SKFaq · Jurnal Trading Harian — Cloudflare Worker API    ║
  * ║                                                            ║
- * ║  Endpoints:                                                ║
- * ║    POST /sync               — Receive data from VPS        ║
- * ║    GET  /api/overview       — Dashboard summary stats      ║
- * ║    GET  /api/signals        — Recent signals list          ║
- * ║    GET  /api/trades         — Recent trades list           ║
- * ║    GET  /api/equity         — Equity curve data            ║
- * ║    GET  /api/tiers          — Performance per tier         ║
- * ║    GET  /api/status         — Live system status           ║
- * ║    GET  /api/distribution   — Outcome distribution         ║
- * ║    GET  /                   — Health check                 ║
+ * ║  Endpoint:                                                 ║
+ * ║    GET    /api/summary?today=YYYY-MM-DD                    ║
+ * ║             → settings + statistik lengkap + semua entry   ║
+ * ║    GET    /api/entries?from=&to=&limit=                    ║
+ * ║    POST   /api/entries   { date, start_balance,            ║
+ * ║                            end_balance, note,              ║
+ * ║                            allow_weekend }   (upsert)      ║
+ * ║    DELETE /api/entries?date=YYYY-MM-DD                     ║
+ * ║    GET    /api/settings                                    ║
+ * ║    POST   /api/settings  { initial_capital, ... }          ║
+ * ║    GET    /  |  /health                                    ║
  * ║                                                            ║
- * ║  Auth: Bearer token on /sync only (read endpoints public)  ║
+ * ║  Aplikasi pribadi — semua endpoint publik, tanpa auth.     ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Max-Age": "86400",
 };
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      ...CORS_HEADERS,
+    },
   });
 
-const error = (msg, status = 400) => json({ error: msg }, status);
+const fail = (message, status = 400) => json({ ok: false, error: message }, status);
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ─────────────────────────────────────────────────────────
-//  AUTH
+//  UTIL TANGGAL (semua dihitung di UTC agar deterministik)
 // ─────────────────────────────────────────────────────────
-async function authSync(request, env) {
-  const auth = request.headers.get("Authorization");
-  if (!auth || !auth.startsWith("Bearer ")) return false;
-  const token = auth.replace("Bearer ", "").trim();
-  return token === env.SYNC_TOKEN;
+const toUTC = (d) => new Date(`${d}T00:00:00Z`);
+
+function isValidDate(d) {
+  if (!DATE_RE.test(d)) return false;
+  const dt = toUTC(d);
+  return !isNaN(dt.getTime()) && dt.toISOString().slice(0, 10) === d;
 }
 
-// ─────────────────────────────────────────────────────────
-//  POST /sync — Receive batch update from VPS
-// ─────────────────────────────────────────────────────────
-async function handleSync(request, env) {
-  if (!(await authSync(request, env))) {
-    return error("Unauthorized", 401);
-  }
+/** 0 = Minggu … 6 = Sabtu */
+const dayOfWeek = (d) => toUTC(d).getUTCDay();
+const isWeekend = (d) => dayOfWeek(d) === 0 || dayOfWeek(d) === 6;
 
+/** Senin pada minggu yang sama dengan `d` (ISO week, Senin = awal) */
+function mondayOf(d) {
+  const dt = toUTC(d);
+  const shift = (dt.getUTCDay() + 6) % 7;
+  dt.setUTCDate(dt.getUTCDate() - shift);
+  return dt.toISOString().slice(0, 10);
+}
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// ─────────────────────────────────────────────────────────
+//  SETTINGS
+// ─────────────────────────────────────────────────────────
+const SETTING_KEYS = ["initial_capital", "monthly_target", "currency"];
+
+async function readSettings(env) {
+  const res = await env.DB.prepare("SELECT key, value FROM settings").all();
+  const out = { initial_capital: 0, monthly_target: 0, currency: "USD" };
+  for (const row of res.results ?? []) {
+    if (row.key === "currency") out.currency = row.value;
+    else out[row.key] = Number(row.value) || 0;
+  }
+  return out;
+}
+
+async function handleSettingsPost(request, env) {
   let body;
   try {
     body = await request.json();
   } catch {
-    return error("Invalid JSON", 400);
+    return fail("JSON tidak valid");
   }
 
-  const synced = { signals: 0, trades: 0, status: 0, snapshot: 0 };
-
-  try {
-    // ── SIGNALS upsert ──
-    if (Array.isArray(body.signals) && body.signals.length > 0) {
-      for (const s of body.signals) {
-        await env.DB.prepare(
-          `INSERT INTO signals (
-            id, timestamp, mode, tier, score, direction, confidence,
-            entry_price, stop_loss, take_profit_1, take_profit_2,
-            risk_reward, reasoning_summary, outcome, outcome_pnl, closed_at
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-          ON CONFLICT(id) DO UPDATE SET
-            outcome=excluded.outcome,
-            outcome_pnl=excluded.outcome_pnl,
-            closed_at=excluded.closed_at,
-            synced_at=CURRENT_TIMESTAMP`
-        )
-          .bind(
-            s.id, s.timestamp, s.mode, s.tier, s.score, s.direction,
-            s.confidence ?? null,
-            s.entry_price ?? null, s.stop_loss ?? null,
-            s.take_profit_1 ?? null, s.take_profit_2 ?? null,
-            s.risk_reward ?? null, s.reasoning_summary ?? null,
-            s.outcome ?? null, s.outcome_pnl ?? null, s.closed_at ?? null
-          )
-          .run();
-        synced.signals++;
-      }
+  const writes = [];
+  for (const key of SETTING_KEYS) {
+    if (body[key] === undefined || body[key] === null) continue;
+    let value = body[key];
+    if (key !== "currency") {
+      const num = Number(value);
+      if (!isFinite(num) || num < 0) return fail(`Nilai ${key} tidak valid`);
+      value = String(num);
+    } else {
+      value = String(value).slice(0, 8).toUpperCase();
     }
-
-    // ── TRADES upsert ──
-    if (Array.isArray(body.trades) && body.trades.length > 0) {
-      for (const t of body.trades) {
-        await env.DB.prepare(
-          `INSERT INTO trades (
-            id, signal_id, ticket, direction, lot, entry_price,
-            stop_loss, take_profit_1, take_profit_2, opened_at,
-            tp1_hit, closed, closed_at, close_reason, profit_loss
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-          ON CONFLICT(ticket) DO UPDATE SET
-            tp1_hit=excluded.tp1_hit,
-            closed=excluded.closed,
-            closed_at=excluded.closed_at,
-            close_reason=excluded.close_reason,
-            profit_loss=excluded.profit_loss,
-            synced_at=CURRENT_TIMESTAMP`
-        )
-          .bind(
-            t.id, t.signal_id ?? null, t.ticket, t.direction, t.lot,
-            t.entry_price, t.stop_loss, t.take_profit_1, t.take_profit_2,
-            t.opened_at,
-            t.tp1_hit ? 1 : 0, t.closed ? 1 : 0,
-            t.closed_at ?? null, t.close_reason ?? null, t.profit_loss ?? null
-          )
-          .run();
-        synced.trades++;
-      }
-    }
-
-    // ── SYSTEM STATUS upsert (id=1) ──
-    if (body.status) {
-      const s = body.status;
-      await env.DB.prepare(
-        `INSERT INTO system_status (
-          id, auto_mode, balance, equity, peak_balance,
-          open_positions, daily_pl, daily_pl_pct, drawdown_pct,
-          consec_losses, kill_switch_active, manual_paused,
-          last_signal_at, updated_at
-        ) VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
-        ON CONFLICT(id) DO UPDATE SET
-          auto_mode=excluded.auto_mode,
-          balance=excluded.balance,
-          equity=excluded.equity,
-          peak_balance=excluded.peak_balance,
-          open_positions=excluded.open_positions,
-          daily_pl=excluded.daily_pl,
-          daily_pl_pct=excluded.daily_pl_pct,
-          drawdown_pct=excluded.drawdown_pct,
-          consec_losses=excluded.consec_losses,
-          kill_switch_active=excluded.kill_switch_active,
-          manual_paused=excluded.manual_paused,
-          last_signal_at=excluded.last_signal_at,
-          updated_at=CURRENT_TIMESTAMP`
-      )
-        .bind(
-          s.auto_mode ?? null, s.balance ?? null, s.equity ?? null,
-          s.peak_balance ?? null, s.open_positions ?? 0,
-          s.daily_pl ?? 0, s.daily_pl_pct ?? 0,
-          s.drawdown_pct ?? 0, s.consec_losses ?? 0,
-          s.kill_switch_active ? 1 : 0,
-          s.manual_paused ? 1 : 0,
-          s.last_signal_at ?? null
-        )
-        .run();
-      synced.status = 1;
-    }
-
-    // ── DAILY SNAPSHOT upsert ──
-    if (body.snapshot) {
-      const sn = body.snapshot;
-      await env.DB.prepare(
-        `INSERT INTO daily_snapshots (
-          date, start_balance, end_balance, peak_balance,
-          trades_count, wins_count, losses_count, total_pnl
-        ) VALUES (?,?,?,?,?,?,?,?)
-        ON CONFLICT(date) DO UPDATE SET
-          end_balance=excluded.end_balance,
-          peak_balance=excluded.peak_balance,
-          trades_count=excluded.trades_count,
-          wins_count=excluded.wins_count,
-          losses_count=excluded.losses_count,
-          total_pnl=excluded.total_pnl,
-          synced_at=CURRENT_TIMESTAMP`
-      )
-        .bind(
-          sn.date, sn.start_balance,
-          sn.end_balance ?? null, sn.peak_balance ?? null,
-          sn.trades_count ?? 0, sn.wins_count ?? 0,
-          sn.losses_count ?? 0, sn.total_pnl ?? 0
-        )
-        .run();
-      synced.snapshot = 1;
-    }
-
-    return json({ ok: true, synced });
-  } catch (e) {
-    console.error("Sync error:", e.message);
-    return error(`Sync failed: ${e.message}`, 500);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  GET /api/overview — Dashboard summary
-// ─────────────────────────────────────────────────────────
-async function handleOverview(env) {
-  try {
-    const [statusRes, sigRes, tradeRes, pfRes] = await Promise.all([
-      env.DB.prepare("SELECT * FROM system_status WHERE id = 1").first(),
-
+    writes.push(
       env.DB.prepare(
-        `SELECT 
-          COUNT(*) AS total,
-          SUM(CASE WHEN outcome IN ('TP1','TP2') THEN 1 ELSE 0 END) AS tp_hits,
-          SUM(CASE WHEN outcome = 'TP1' THEN 1 ELSE 0 END) AS tp1_hits,
-          SUM(CASE WHEN outcome = 'TP2' THEN 1 ELSE 0 END) AS tp2_hits,
-          SUM(CASE WHEN outcome = 'SL' THEN 1 ELSE 0 END) AS sl_hits,
-          SUM(CASE WHEN outcome = 'BE' THEN 1 ELSE 0 END) AS be_hits
-        FROM signals
-        WHERE timestamp >= datetime('now','-30 days')
-          AND outcome IS NOT NULL`
-      ).first(),
-
-      env.DB.prepare(
-        `SELECT 
-          COUNT(*) AS total,
-          SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
-          SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END) AS losses,
-          COALESCE(SUM(profit_loss),0) AS total_pnl,
-          COALESCE(AVG(profit_loss),0) AS avg_pnl,
-          COALESCE(MAX(profit_loss),0) AS best_trade,
-          COALESCE(MIN(profit_loss),0) AS worst_trade
-        FROM trades
-        WHERE opened_at >= datetime('now','-30 days')
-          AND closed = 1`
-      ).first(),
-
-      env.DB.prepare(
-        `SELECT 
-          COALESCE(SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END),0) AS gross_profit,
-          COALESCE(ABS(SUM(CASE WHEN profit_loss < 0 THEN profit_loss ELSE 0 END)),0) AS gross_loss
-        FROM trades
-        WHERE closed = 1 AND opened_at >= datetime('now','-30 days')`
-      ).first(),
-    ]);
-
-    const totalOutcomes = (sigRes.tp_hits ?? 0) + (sigRes.sl_hits ?? 0);
-    const winRate = totalOutcomes > 0 ? (sigRes.tp_hits / totalOutcomes) * 100 : 0;
-    const profitFactor =
-      pfRes.gross_loss > 0 ? pfRes.gross_profit / pfRes.gross_loss : 0;
-
-    return json({
-      status: statusRes ?? {},
-      stats: {
-        period_days: 30,
-        total_signals: sigRes.total ?? 0,
-        tp_hits: sigRes.tp_hits ?? 0,
-        tp1_hits: sigRes.tp1_hits ?? 0,
-        tp2_hits: sigRes.tp2_hits ?? 0,
-        sl_hits: sigRes.sl_hits ?? 0,
-        be_hits: sigRes.be_hits ?? 0,
-        win_rate: Math.round(winRate * 10) / 10,
-        profit_factor: Math.round(profitFactor * 100) / 100,
-        total_trades: tradeRes.total ?? 0,
-        trades_won: tradeRes.wins ?? 0,
-        trades_lost: tradeRes.losses ?? 0,
-        total_pnl: tradeRes.total_pnl ?? 0,
-        avg_pnl: tradeRes.avg_pnl ?? 0,
-        best_trade: tradeRes.best_trade ?? 0,
-        worst_trade: tradeRes.worst_trade ?? 0,
-      },
-    });
-  } catch (e) {
-    return error(`Overview failed: ${e.message}`, 500);
+        `INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                        updated_at = CURRENT_TIMESTAMP`
+      ).bind(key, value)
+    );
   }
+
+  if (writes.length) await env.DB.batch(writes);
+  return json({ ok: true, settings: await readSettings(env) });
 }
 
 // ─────────────────────────────────────────────────────────
-//  GET /api/signals
+//  ENTRIES
 // ─────────────────────────────────────────────────────────
-async function handleSignals(request, env) {
-  const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
-  const tier = url.searchParams.get("tier");
+async function allEntries(env) {
+  const res = await env.DB.prepare(
+    `SELECT date, start_balance, end_balance, note, updated_at
+       FROM daily_entries
+      ORDER BY date ASC`
+  ).all();
 
+  return (res.results ?? []).map((e) => {
+    const pnl = round2(e.end_balance - e.start_balance);
+    return {
+      date: e.date,
+      start_balance: round2(e.start_balance),
+      end_balance: round2(e.end_balance),
+      pnl,
+      pnl_pct: e.start_balance > 0 ? round2((pnl / e.start_balance) * 100) : 0,
+      note: e.note ?? null,
+      weekend: isWeekend(e.date),
+      updated_at: e.updated_at ?? null,
+    };
+  });
+}
+
+async function handleEntriesGet(request, env) {
+  const url = new URL(request.url);
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  const limit = Math.min(parseInt(url.searchParams.get("limit")) || 500, 2000);
+
+  let entries = await allEntries(env);
+  if (from && isValidDate(from)) entries = entries.filter((e) => e.date >= from);
+  if (to && isValidDate(to)) entries = entries.filter((e) => e.date <= to);
+  if (entries.length > limit) entries = entries.slice(-limit);
+
+  return json({ ok: true, entries, count: entries.length });
+}
+
+async function handleEntryPost(request, env) {
+  let body;
   try {
-    let query = "SELECT * FROM signals";
-    const params = [];
-    if (tier) {
-      query += " WHERE tier = ?";
-      params.push(tier);
+    body = await request.json();
+  } catch {
+    return fail("JSON tidak valid");
+  }
+
+  const date = String(body.date ?? "").slice(0, 10);
+  if (!isValidDate(date)) return fail("Format tanggal harus YYYY-MM-DD");
+
+  const start = Number(body.start_balance);
+  const end = Number(body.end_balance);
+  if (!isFinite(start) || start < 0) return fail("Saldo awal tidak valid");
+  if (!isFinite(end) || end < 0) return fail("Saldo akhir tidak valid");
+  if (start > 1e12 || end > 1e12) return fail("Nilai saldo di luar batas wajar");
+
+  if (isWeekend(date) && !body.allow_weekend) {
+    return fail(
+      "Sabtu & Minggu adalah hari libur market. Centang “tetap simpan” bila memang perlu.",
+      422
+    );
+  }
+
+  const note = body.note ? String(body.note).slice(0, 280) : null;
+
+  await env.DB.prepare(
+    `INSERT INTO daily_entries (date, start_balance, end_balance, note)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(date) DO UPDATE SET
+       start_balance = excluded.start_balance,
+       end_balance   = excluded.end_balance,
+       note          = excluded.note,
+       updated_at    = CURRENT_TIMESTAMP`
+  )
+    .bind(date, round2(start), round2(end), note)
+    .run();
+
+  return json({
+    ok: true,
+    entry: {
+      date,
+      start_balance: round2(start),
+      end_balance: round2(end),
+      pnl: round2(end - start),
+      note,
+      weekend: isWeekend(date),
+    },
+  });
+}
+
+async function handleEntryDelete(request, env) {
+  const url = new URL(request.url);
+  const date = url.searchParams.get("date") ?? "";
+  if (!isValidDate(date)) return fail("Format tanggal harus YYYY-MM-DD");
+
+  const res = await env.DB.prepare("DELETE FROM daily_entries WHERE date = ?")
+    .bind(date)
+    .run();
+
+  const removed = res.meta?.changes ?? 0;
+  if (!removed) return fail("Entry tidak ditemukan", 404);
+  return json({ ok: true, deleted: date });
+}
+
+// ─────────────────────────────────────────────────────────
+//  STATISTIK
+// ─────────────────────────────────────────────────────────
+function computeStats(entries, settings, today) {
+  const base = {
+    has_data: false,
+    initial_capital: settings.initial_capital || 0,
+    current_balance: settings.initial_capital || 0,
+    total_pnl: 0,
+    total_pnl_pct: 0,
+    net_adjustment: 0,
+    trading_days: 0,
+    win_days: 0,
+    loss_days: 0,
+    flat_days: 0,
+    win_rate: 0,
+    gross_profit: 0,
+    gross_loss: 0,
+    profit_factor: 0,
+    avg_pnl: 0,
+    avg_win: 0,
+    avg_loss: 0,
+    best_day: null,
+    worst_day: null,
+    max_drawdown_pct: 0,
+    max_drawdown_amount: 0,
+    peak_balance: settings.initial_capital || 0,
+    current_streak: 0,
+    streak_type: "none",
+    longest_win_streak: 0,
+    longest_loss_streak: 0,
+    today: null,
+    week_pnl: 0,
+    week_days: 0,
+    month_pnl: 0,
+    month_days: 0,
+    month_win_days: 0,
+    month_target_pct: 0,
+    first_date: null,
+    last_date: null,
+  };
+
+  if (!entries.length) return base;
+
+  const n = entries.length;
+  const first = entries[0];
+  const last = entries[n - 1];
+
+  const initial =
+    settings.initial_capital > 0 ? settings.initial_capital : first.start_balance;
+
+  let totalPnl = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
+  let win = 0;
+  let loss = 0;
+  let flat = 0;
+  let netAdjustment = 0;
+  let peak = entries[0].start_balance;
+  let maxDdPct = 0;
+  let maxDdAmount = 0;
+  let best = entries[0];
+  let worst = entries[0];
+  let longestWin = 0;
+  let longestLoss = 0;
+  let runWin = 0;
+  let runLoss = 0;
+
+  entries.forEach((e, i) => {
+    const pnl = e.pnl;
+    totalPnl += pnl;
+
+    if (pnl > 0) {
+      grossProfit += pnl;
+      win++;
+      runWin++;
+      runLoss = 0;
+    } else if (pnl < 0) {
+      grossLoss += Math.abs(pnl);
+      loss++;
+      runLoss++;
+      runWin = 0;
+    } else {
+      flat++;
+      runWin = 0;
+      runLoss = 0;
     }
-    query += " ORDER BY timestamp DESC LIMIT ?";
-    params.push(limit);
+    longestWin = Math.max(longestWin, runWin);
+    longestLoss = Math.max(longestLoss, runLoss);
 
-    const result = await env.DB.prepare(query).bind(...params).all();
-    return json({ signals: result.results ?? [] });
-  } catch (e) {
-    return error(e.message, 500);
+    if (i > 0) netAdjustment += e.start_balance - entries[i - 1].end_balance;
+    if (pnl > best.pnl) best = e;
+    if (pnl < worst.pnl) worst = e;
+
+    peak = Math.max(peak, e.end_balance);
+    const ddAmount = peak - e.end_balance;
+    if (ddAmount > maxDdAmount) maxDdAmount = ddAmount;
+    const ddPct = peak > 0 ? (ddAmount / peak) * 100 : 0;
+    if (ddPct > maxDdPct) maxDdPct = ddPct;
+  });
+
+  // Streak berjalan (dihitung mundur dari entry terakhir)
+  let streak = 0;
+  let streakType = "none";
+  for (let i = n - 1; i >= 0; i--) {
+    const pnl = entries[i].pnl;
+    if (pnl === 0) break;
+    const type = pnl > 0 ? "win" : "loss";
+    if (streakType === "none") streakType = type;
+    if (type !== streakType) break;
+    streak++;
   }
+
+  const todayEntry = today ? entries.find((e) => e.date === today) ?? null : null;
+
+  const monthKey = (today ?? last.date).slice(0, 7);
+  const monthEntries = entries.filter((e) => e.date.slice(0, 7) === monthKey);
+  const monthPnl = monthEntries.reduce((a, e) => a + e.pnl, 0);
+
+  const weekStart = mondayOf(today ?? last.date);
+  const weekEntries = entries.filter((e) => e.date >= weekStart);
+  const weekPnl = weekEntries.reduce((a, e) => a + e.pnl, 0);
+
+  const decided = win + loss;
+
+  return {
+    has_data: true,
+    initial_capital: round2(initial),
+    current_balance: round2(last.end_balance),
+    total_pnl: round2(totalPnl),
+    total_pnl_pct: initial > 0 ? round2((totalPnl / initial) * 100) : 0,
+    net_adjustment: round2(netAdjustment),
+    trading_days: n,
+    win_days: win,
+    loss_days: loss,
+    flat_days: flat,
+    win_rate: decided > 0 ? round2((win / decided) * 100) : 0,
+    gross_profit: round2(grossProfit),
+    gross_loss: round2(grossLoss),
+    profit_factor: grossLoss > 0 ? round2(grossProfit / grossLoss) : grossProfit > 0 ? 99.99 : 0,
+    avg_pnl: round2(totalPnl / n),
+    avg_win: win > 0 ? round2(grossProfit / win) : 0,
+    avg_loss: loss > 0 ? round2(grossLoss / loss) : 0,
+    best_day: { date: best.date, pnl: best.pnl, pnl_pct: best.pnl_pct },
+    worst_day: { date: worst.date, pnl: worst.pnl, pnl_pct: worst.pnl_pct },
+    max_drawdown_pct: round2(maxDdPct),
+    max_drawdown_amount: round2(maxDdAmount),
+    peak_balance: round2(peak),
+    current_streak: streak,
+    streak_type: streak > 0 ? streakType : "none",
+    longest_win_streak: longestWin,
+    longest_loss_streak: longestLoss,
+    today: todayEntry
+      ? { date: todayEntry.date, pnl: todayEntry.pnl, pnl_pct: todayEntry.pnl_pct }
+      : null,
+    week_pnl: round2(weekPnl),
+    week_days: weekEntries.length,
+    month_pnl: round2(monthPnl),
+    month_days: monthEntries.length,
+    month_win_days: monthEntries.filter((e) => e.pnl > 0).length,
+    month_target_pct:
+      settings.monthly_target > 0
+        ? round2((monthPnl / settings.monthly_target) * 100)
+        : 0,
+    first_date: first.date,
+    last_date: last.date,
+  };
 }
 
-// ─────────────────────────────────────────────────────────
-//  GET /api/trades
-// ─────────────────────────────────────────────────────────
-async function handleTrades(request, env) {
+async function handleSummary(request, env) {
   const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get("limit")) || 50, 200);
-  const status = url.searchParams.get("status");
+  let today = url.searchParams.get("today") ?? "";
+  if (!isValidDate(today)) today = new Date().toISOString().slice(0, 10);
 
-  try {
-    let query = "SELECT * FROM trades";
-    if (status === "open") query += " WHERE closed = 0";
-    else if (status === "closed") query += " WHERE closed = 1";
-    query += ` ORDER BY opened_at DESC LIMIT ?`;
+  const [settings, entries] = await Promise.all([readSettings(env), allEntries(env)]);
+  const stats = computeStats(entries, settings, today);
 
-    const result = await env.DB.prepare(query).bind(limit).all();
-    return json({ trades: result.results ?? [] });
-  } catch (e) {
-    return error(e.message, 500);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  GET /api/equity — Equity curve
-// ─────────────────────────────────────────────────────────
-async function handleEquity(request, env) {
-  const url = new URL(request.url);
-  const days = Math.min(parseInt(url.searchParams.get("days")) || 30, 365);
-
-  try {
-    const result = await env.DB.prepare(
-      `SELECT date, start_balance, end_balance, peak_balance, total_pnl, trades_count
-       FROM daily_snapshots
-       WHERE date >= date('now','-' || ? || ' days')
-       ORDER BY date ASC`
-    )
-      .bind(days)
-      .all();
-
-    return json({ equity: result.results ?? [] });
-  } catch (e) {
-    return error(e.message, 500);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  GET /api/tiers — Performance per tier
-// ─────────────────────────────────────────────────────────
-async function handleTiers(env) {
-  try {
-    const result = await env.DB.prepare(
-      `SELECT
-        tier,
-        COUNT(*) AS count,
-        SUM(CASE WHEN outcome IN ('TP1','TP2') THEN 1 ELSE 0 END) AS wins,
-        SUM(CASE WHEN outcome = 'SL' THEN 1 ELSE 0 END) AS losses,
-        COALESCE(SUM(outcome_pnl),0) AS total_pnl,
-        COALESCE(AVG(score),0) AS avg_score
-      FROM signals
-      WHERE timestamp >= datetime('now','-30 days')
-        AND outcome IS NOT NULL
-      GROUP BY tier
-      ORDER BY 
-        CASE tier
-          WHEN 'KILLER' THEN 1
-          WHEN 'STRONG' THEN 2
-          WHEN 'MODERATE' THEN 3
-          WHEN 'WEAK' THEN 4
-          ELSE 5
-        END`
-    ).all();
-
-    const tiers = (result.results ?? []).map((t) => ({
-      ...t,
-      win_rate:
-        t.wins + t.losses > 0
-          ? Math.round((t.wins / (t.wins + t.losses)) * 1000) / 10
-          : 0,
-    }));
-
-    return json({ tiers });
-  } catch (e) {
-    return error(e.message, 500);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  GET /api/status
-// ─────────────────────────────────────────────────────────
-async function handleStatus(env) {
-  try {
-    const status = await env.DB.prepare(
-      "SELECT * FROM system_status WHERE id = 1"
-    ).first();
-    return json({ status: status ?? {} });
-  } catch (e) {
-    return error(e.message, 500);
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  GET /api/distribution — Outcome distribution
-// ─────────────────────────────────────────────────────────
-async function handleDistribution(env) {
-  try {
-    const result = await env.DB.prepare(
-      `SELECT 
-        COALESCE(outcome,'pending') AS outcome,
-        COUNT(*) AS count
-      FROM signals
-      WHERE timestamp >= datetime('now','-30 days')
-      GROUP BY outcome`
-    ).all();
-
-    return json({ distribution: result.results ?? [] });
-  } catch (e) {
-    return error(e.message, 500);
-  }
+  return json({
+    ok: true,
+    today,
+    settings,
+    stats,
+    entries,
+    server_time: new Date().toISOString(),
+  });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -418,34 +412,39 @@ export default {
     }
 
     const url = new URL(request.url);
-    const path = url.pathname;
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const method = request.method;
 
     try {
-      if (path === "/sync" && request.method === "POST") {
-        return await handleSync(request, env);
+      if (path === "/api/summary" && method === "GET") return await handleSummary(request, env);
+
+      if (path === "/api/entries") {
+        if (method === "GET") return await handleEntriesGet(request, env);
+        if (method === "POST") return await handleEntryPost(request, env);
+        if (method === "DELETE") return await handleEntryDelete(request, env);
+        return fail("Method tidak didukung", 405);
       }
 
-      if (path === "/api/overview") return await handleOverview(env);
-      if (path === "/api/signals") return await handleSignals(request, env);
-      if (path === "/api/trades") return await handleTrades(request, env);
-      if (path === "/api/equity") return await handleEquity(request, env);
-      if (path === "/api/tiers") return await handleTiers(env);
-      if (path === "/api/status") return await handleStatus(env);
-      if (path === "/api/distribution") return await handleDistribution(env);
+      if (path === "/api/settings") {
+        if (method === "GET") return json({ ok: true, settings: await readSettings(env) });
+        if (method === "POST") return await handleSettingsPost(request, env);
+        return fail("Method tidak didukung", 405);
+      }
 
       if (path === "/" || path === "/health") {
         return json({
           ok: true,
-          service: "XAUUSD AI Signal Engine API",
-          version: "1.0.0",
+          service: "SKFaq · Jurnal Trading Harian",
+          version: "2.0.0",
           timestamp: new Date().toISOString(),
         });
       }
 
-      return error("Not found", 404);
+      return fail("Not found", 404);
     } catch (e) {
-      console.error("Router error:", e.message);
-      return error(`Server error: ${e.message}`, 500);
+      console.error("Router error:", e && e.message);
+      return fail(`Server error: ${e && e.message}`, 500);
     }
   },
 };
+
