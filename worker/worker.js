@@ -69,7 +69,7 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ─────────────────────────────────────────────────────────
 const SETTING_KEYS = [
   "initial_capital", "monthly_target", "currency", "finance_currency",
-  "carry_over", "carry_start_month", "carry_opening",
+  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past",
 ];
 const STRING_SETTINGS = ["currency", "finance_currency", "carry_start_month"];
 
@@ -80,6 +80,7 @@ async function readSettings(env) {
     carry_over: 1,            // 1 = sisa bulan ini dibawa ke bulan berikutnya
     carry_start_month: "",    // "" = otomatis dari bulan data paling awal
     carry_opening: 0,         // saldo pembuka pada carry_start_month
+    auto_pay_past: 1,         // anggap cicilan bulan-bulan lalu sudah dibayar
   };
   for (const row of res.results ?? []) {
     if (STRING_SETTINGS.includes(row.key)) out[row.key] = row.value;
@@ -471,11 +472,91 @@ async function loadFinanceRaw(env) {
   };
 }
 
+/**
+ * Menandai cicilan bulan-bulan yang sudah lewat sebagai terbayar.
+ * Hanya untuk bulan < bulan berjalan, hanya bila hutang punya start_month,
+ * dan tidak pernah menimpa baris yang sudah ada (termasuk yang sengaja
+ * ditandai "belum bayar" oleh user, yaitu baris beramount 0).
+ */
+async function autoPayPastDebts(env, today) {
+  const currentMonth = today.slice(0, 7);
+
+  const [debtsRes, paysRes] = await Promise.all([
+    env.DB.prepare("SELECT * FROM debts").all(),
+    env.DB.prepare("SELECT debt_id, month, amount FROM debt_payments").all(),
+  ]);
+
+  const debts = debtsRes.results ?? [];
+  if (!debts.length) return 0;
+
+  const rows = paysRes.results ?? [];
+  const existing = new Set(rows.map((p) => p.debt_id + "|" + p.month));
+  const paidTotal = new Map();
+  for (const p of rows) paidTotal.set(p.debt_id, (paidTotal.get(p.debt_id) || 0) + p.amount);
+
+  const inserts = [];
+  const closes = [];
+
+  for (const d of debts) {
+    if (!isValidMonth(d.start_month)) continue;      // tanpa bulan mulai tidak bisa diasumsikan
+    if (d.start_month >= currentMonth) continue;
+    if (d.monthly_installment <= 0) continue;
+
+    let remaining = round2(d.total_amount - (paidTotal.get(d.id) || 0));
+    if (remaining <= 0.009) continue;
+
+    let m = d.start_month;
+    let guard = 0;
+    while (m < currentMonth && remaining > 0.009 && guard++ < 240) {
+      if (d.final_due_date && d.final_due_date.slice(0, 7) < m) break;
+      if (!existing.has(d.id + "|" + m)) {
+        const amount = round2(Math.min(d.monthly_installment, remaining));
+        inserts.push(
+          env.DB.prepare(
+            "INSERT INTO debt_payments (debt_id, month, amount, auto) VALUES (?,?,?,1)"
+          ).bind(d.id, m, amount)
+        );
+        remaining = round2(remaining - amount);
+      }
+      m = monthShift(m, 1);
+    }
+
+    if (remaining <= 0.009 && d.status !== "lunas") {
+      closes.push(
+        env.DB.prepare(
+          "UPDATE debts SET status='lunas', updated_at=CURRENT_TIMESTAMP WHERE id=?"
+        ).bind(d.id)
+      );
+    }
+  }
+
+  if (inserts.length || closes.length) await env.DB.batch([...inserts, ...closes]);
+  return inserts.length;
+}
+
+/** Sinkronkan kolom status dengan akumulasi pembayaran sesungguhnya */
+async function syncDebtStatus(env, debtId) {
+  const row = await env.DB.prepare(
+    `SELECT d.total_amount AS total,
+            COALESCE((SELECT SUM(amount) FROM debt_payments WHERE debt_id = d.id), 0) AS paid,
+            d.status AS status
+       FROM debts d WHERE d.id = ?`
+  ).bind(debtId).first();
+  if (!row) return;
+
+  const next = row.paid >= row.total - 0.009 ? "lunas" : "aktif";
+  if (next !== row.status) {
+    await env.DB.prepare(
+      "UPDATE debts SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
+    ).bind(next, debtId).run();
+  }
+}
+
 function buildFinance(raw, month, today, settings) {
   const paidByDebt = new Map();
   const paidByKey = new Map();
   for (const p of raw.payments) {
-    paidByDebt.set(p.debt_id, (paidByDebt.get(p.debt_id) || 0) + p.amount);
+    if (p.amount > 0) paidByDebt.set(p.debt_id, (paidByDebt.get(p.debt_id) || 0) + p.amount);
     paidByKey.set(p.debt_id + "|" + p.month, p);
   }
 
@@ -485,7 +566,9 @@ function buildFinance(raw, month, today, settings) {
     const remaining = Math.max(round2(d.total_amount - paid), 0);
     const lunas = d.status === "lunas" || remaining <= 0.009;
     const dueThis = dueDateIn(month, d.due_day);
-    const paidThisMonth = paidByKey.has(d.id + "|" + month);
+    const payRow = paidByKey.get(d.id + "|" + month) || null;
+    const paidThisMonth = !!payRow && payRow.amount > 0;
+    const skippedThisMonth = !!payRow && payRow.amount <= 0;
     const activeThisMonth =
       !lunas && (!d.start_month || d.start_month <= month) &&
       (!d.final_due_date || d.final_due_date.slice(0, 7) >= month);
@@ -505,10 +588,13 @@ function buildFinance(raw, month, today, settings) {
       progress_pct: d.total_amount > 0 ? round2((paid / d.total_amount) * 100) : 0,
       months_left:
         d.monthly_installment > 0 ? Math.ceil(remaining / d.monthly_installment) : null,
-      installments_paid: raw.payments.filter((p) => p.debt_id === d.id).length,
+      installments_paid: raw.payments.filter((p) => p.debt_id === d.id && p.amount > 0).length,
       due_date_this_month: dueThis,
       days_to_due: daysBetween(today, dueThis),
       paid_this_month: paidThisMonth,
+      paid_auto_this_month: paidThisMonth && Number(payRow.auto) === 1,
+      skipped_this_month: skippedThisMonth,
+      auto_paid_count: raw.payments.filter((p) => p.debt_id === d.id && Number(p.auto) === 1).length,
       due_this_month: activeThisMonth ? round2(Math.min(d.monthly_installment, remaining)) : 0,
       active_this_month: activeThisMonth,
     };
@@ -693,7 +779,10 @@ async function handleFinance(request, env) {
   if (!isValidDate(today)) today = new Date().toISOString().slice(0, 10);
   if (!isValidMonth(month)) month = today.slice(0, 7);
 
-  const [raw, settings] = await Promise.all([loadFinanceRaw(env), readSettings(env)]);
+  const settings = await readSettings(env);
+  if (Number(settings.auto_pay_past) !== 0) await autoPayPastDebts(env, today);
+
+  const raw = await loadFinanceRaw(env);
   return json({ ok: true, settings, ...buildFinance(raw, month, today, settings) });
 }
 
@@ -776,10 +865,26 @@ async function handleDebtPay(request, env) {
     const debtId = Number(url.searchParams.get("debt_id"));
     const month = url.searchParams.get("month") ?? "";
     if (!debtId || !isValidMonth(month)) return fail("debt_id dan month wajib diisi");
+    const settings = await readSettings(env);
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const autoOn = Number(settings.auto_pay_past) !== 0;
+
+    if (autoOn && month < currentMonth) {
+      // Simpan penanda amount 0 supaya backfill tidak mengisinya lagi
+      await env.DB.prepare(
+        `INSERT INTO debt_payments (debt_id, month, amount, auto) VALUES (?,?,0,2)
+         ON CONFLICT(debt_id, month) DO UPDATE SET amount = 0, auto = 2,
+                                                   paid_at = CURRENT_TIMESTAMP`
+      ).bind(debtId, month).run();
+      await syncDebtStatus(env, debtId);
+      return json({ ok: true, marked: "belum_bayar" });
+    }
+
     const res = await env.DB.prepare(
       "DELETE FROM debt_payments WHERE debt_id = ? AND month = ?"
     ).bind(debtId, month).run();
     if (!(res.meta?.changes ?? 0)) return fail("Pembayaran tidak ditemukan", 404);
+    await syncDebtStatus(env, debtId);
     return json({ ok: true });
   }
 
@@ -798,21 +903,17 @@ async function handleDebtPay(request, env) {
   if (!isFinite(amount) || amount <= 0) amount = debt.monthly_installment;
 
   await env.DB.prepare(
-    `INSERT INTO debt_payments (debt_id, month, amount) VALUES (?,?,?)
+    `INSERT INTO debt_payments (debt_id, month, amount, auto) VALUES (?,?,?,0)
      ON CONFLICT(debt_id, month) DO UPDATE SET amount = excluded.amount,
+                                               auto = 0,
                                                paid_at = CURRENT_TIMESTAMP`
   ).bind(debtId, month, round2(amount)).run();
 
-  // Tandai lunas otomatis bila akumulasi pembayaran menutup total hutang
+  await syncDebtStatus(env, debtId);
+
   const sum = await env.DB.prepare(
     "SELECT COALESCE(SUM(amount),0) AS paid FROM debt_payments WHERE debt_id = ?"
   ).bind(debtId).first();
-
-  if ((sum?.paid ?? 0) >= debt.total_amount - 0.009) {
-    await env.DB.prepare(
-      "UPDATE debts SET status='lunas', updated_at=CURRENT_TIMESTAMP WHERE id=?"
-    ).bind(debtId).run();
-  }
 
   return json({ ok: true, paid_total: round2(sum?.paid ?? 0) });
 }
