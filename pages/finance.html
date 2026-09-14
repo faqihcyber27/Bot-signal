@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0d14">
+<title>SKFaq · Manajemen Keuangan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./app.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ═══ NAV ═══ -->
+  <nav class="nav">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">SK</div>
+      <div class="brand-text">
+        <span class="brand-name">SKFaq</span>
+        <span class="brand-tag">Keuangan Pribadi</span>
+      </div>
+    </div>
+
+    <nav class="page-tabs" aria-label="Navigasi halaman">
+      <a class="page-tab" href="./index.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 14 3-3 4 4 5-5"/></svg>
+        <span>Jurnal</span>
+      </a>
+      <a class="page-tab active" href="./finance.html" aria-current="page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg>
+        <span>Keuangan</span>
+      </a>
+    </nav>
+
+    <div class="nav-right">
+      <div id="statusPill" class="status-pill off">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="statusText">memuat</span>
+      </div>
+      <button class="icon-btn" id="settingsBtn" aria-label="Pengaturan mata uang">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="refreshBtn" aria-label="Muat ulang data">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>
+        </svg>
+      </button>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <div class="page-head">
+      <div>
+        <h1>Manajemen Keuangan</h1>
+        <p id="pageSub">Pemasukan, cicilan hutang, dan pengeluaran bulanan</p>
+      </div>
+      <div class="month-picker">
+        <button class="icon-btn" id="monthPrev" aria-label="Bulan sebelumnya">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <div class="month-label" id="monthLabel">—<small id="monthSub">—</small></div>
+        <button class="icon-btn" id="monthNext" aria-label="Bulan berikutnya">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <button class="btn" id="monthToday" type="button">Bulan ini</button>
+      </div>
+    </div>
+
+    <!-- ═══ HERO ═══ -->
+    <section class="hero reveal" aria-label="Ringkasan bulanan">
+      <div class="hero-grid">
+        <div class="hero-block primary">
+          <div class="hero-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/>
+            </svg>
+            Sisa / Buffer Bulan Ini
+          </div>
+          <div class="hero-value" id="bufferValue">0</div>
+          <div class="hero-meta" id="bufferMeta"><span>—</span></div>
+        </div>
+
+        <div class="hero-block">
+          <div class="hero-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>
+            </svg>
+            Pemasukan
+          </div>
+          <div class="hero-value" id="incomeValue">—</div>
+          <div class="hero-meta" id="incomeMeta"><span>—</span></div>
+        </div>
+
+        <div class="hero-block">
+          <div class="hero-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
+            </svg>
+            Total Keluar
+          </div>
+          <div class="hero-value" id="outflowValue">—</div>
+          <div class="hero-meta" id="outflowMeta"><span>—</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ STATS ═══ -->
+    <div class="stats">
+      <div class="stat violet reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
+        <div class="stat-label">Cicilan Bulan Ini</div>
+        <div class="stat-value" id="sInstallment">—</div>
+        <div class="stat-meta" id="sInstallmentMeta">—</div>
+      </div>
+
+      <div class="stat amber reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg></div>
+        <div class="stat-label">Pengeluaran Rutin</div>
+        <div class="stat-value" id="sFixed">—</div>
+        <div class="stat-meta" id="sFixedMeta">—</div>
+      </div>
+
+      <div class="stat blue reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg></div>
+        <div class="stat-label">Pengeluaran Lain</div>
+        <div class="stat-value" id="sVar">—</div>
+        <div class="stat-meta" id="sVarMeta">—</div>
+      </div>
+
+      <div class="stat red reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+        <div class="stat-label">Sisa Hutang</div>
+        <div class="stat-value" id="sDebt">—</div>
+        <div class="stat-meta" id="sDebtMeta">—</div>
+      </div>
+
+      <div class="stat gold reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+        <div class="stat-label">Jatuh Tempo Terdekat</div>
+        <div class="stat-value" id="sDue">—</div>
+        <div class="stat-meta" id="sDueMeta">—</div>
+      </div>
+
+      <div class="stat green reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg></div>
+        <div class="stat-label">Profit Trading</div>
+        <div class="stat-value" id="sTrading">—</div>
+        <div class="stat-meta" id="sTradingMeta">tidak dihitung ke buffer</div>
+      </div>
+    </div>
+
+    <!-- ═══ ALOKASI ═══ -->
+    <section class="chart-card" aria-label="Alokasi pemasukan">
+      <div class="chart-head">
+        <div class="chart-title">
+          <h3>Alokasi Pemasukan</h3>
+          <p id="allocSub">—</p>
+        </div>
+      </div>
+      <div class="alloc-bar" id="allocBar" role="img" aria-label="Proporsi alokasi pemasukan"></div>
+      <div class="alloc-legend" id="allocLegend"></div>
+    </section>
+
+    <!-- ═══ TREN + DONUT ═══ -->
+    <div class="duo">
+      <section class="chart-card" style="margin-bottom:0" aria-label="Tren 6 bulan">
+        <div class="chart-head">
+          <div class="chart-title">
+            <h3>Arus 6 Bulan</h3>
+            <p id="trendSub">pemasukan vs pengeluaran · garis emas = sisa</p>
+          </div>
+        </div>
+        <div class="chart-canvas" style="height:300px"><canvas id="trendChart"></canvas></div>
+      </section>
+
+      <section class="panel" aria-label="Komposisi pengeluaran">
+        <div class="panel-head">
+          <div class="panel-title"><span class="panel-title-dot" aria-hidden="true"></span> Komposisi Keluar</div>
+          <span class="panel-meta" id="donutMeta">—</span>
+        </div>
+        <div style="padding:16px 20px 22px">
+          <div class="donut-wrap">
+            <canvas id="catChart"></canvas>
+            <div class="donut-center">
+              <span class="donut-k">Total Keluar</span>
+              <span class="donut-v" id="donutTotal">—</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ═══ HUTANG ═══ -->
+    <section class="panel" style="margin-bottom:24px" aria-label="Hutang dan cicilan">
+      <div class="panel-head">
+        <div class="panel-title"><span class="panel-title-dot" aria-hidden="true"></span> Hutang &amp; Cicilan</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="panel-meta" id="debtMeta">—</span>
+          <button class="btn" id="addDebtBtn" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Tambah
+          </button>
+        </div>
+      </div>
+      <div id="debtBody">
+        <div class="empty">
+          <div class="empty-icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
+          <div class="empty-title">Belum ada hutang tercatat</div>
+          <div class="empty-sub">tambahkan label, total, cicilan, dan jatuh tempo</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ PEMASUKAN + PENGELUARAN ═══ -->
+    <div class="duo">
+      <section class="panel" aria-label="Pemasukan bulan ini">
+        <div class="panel-head">
+          <div class="panel-title"><span class="panel-title-dot" aria-hidden="true"></span> Pemasukan</div>
+          <button class="btn" id="addIncomeBtn" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Tambah
+          </button>
+        </div>
+        <div id="incomeBody">
+          <div class="empty">
+            <div class="empty-icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></div>
+            <div class="empty-title">Belum ada pemasukan</div>
+            <div class="empty-sub">mulai dengan input gaji bulan ini</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Pengeluaran">
+        <div class="panel-head">
+          <div class="panel-title"><span class="panel-title-dot" aria-hidden="true"></span> Pengeluaran</div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div class="tabs" role="group" aria-label="Filter pengeluaran">
+              <button class="tab active" data-etab="semua" type="button">Semua</button>
+              <button class="tab" data-etab="rutin" type="button">Rutin</button>
+              <button class="tab" data-etab="sekali" type="button">Sekali</button>
+            </div>
+            <button class="btn" id="addExpenseBtn" type="button">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              Tambah
+            </button>
+          </div>
+        </div>
+        <div id="expenseBody">
+          <div class="empty">
+            <div class="empty-icon"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/></svg></div>
+            <div class="empty-title">Belum ada pengeluaran</div>
+            <div class="empty-sub">mis. EV, listrik, kos, transport</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      <div class="footer-mark">SKFaq · Keuangan Pribadi</div>
+    </footer>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<!-- ═══ MODAL: PEMASUKAN ═══ -->
+<div class="overlay" id="incomeOverlay">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="incomeTitle">
+    <div class="modal-head"><h3 id="incomeTitle">Tambah Pemasukan</h3><p id="incomeMonthHint">—</p></div>
+    <div class="modal-body two">
+      <div class="field full">
+        <label for="iLabel">Label</label>
+        <input class="input" type="text" id="iLabel" maxlength="80" placeholder="mis. Gaji Bank Mandiri" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+      <div class="field">
+        <label for="iAmount">Jumlah</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="iAmount" step="1000" min="0" inputmode="decimal" placeholder="0"></div>
+      </div>
+      <div class="field">
+        <label for="iCat">Kategori</label>
+        <select class="input" id="iCat">
+          <option value="gaji">Gaji</option>
+          <option value="bonus">Bonus / THR</option>
+          <option value="freelance">Freelance</option>
+          <option value="trading">Trading</option>
+          <option value="lainnya">Lainnya</option>
+        </select>
+      </div>
+      <div class="field full">
+        <label for="iNote">Catatan (opsional)</label>
+        <input class="input" type="text" id="iNote" maxlength="200" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="incomeOverlay" type="button">Batal</button>
+      <button class="btn btn-primary" id="incomeSave" type="button"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: HUTANG ═══ -->
+<div class="overlay" id="debtOverlay">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="debtTitle">
+    <div class="modal-head"><h3 id="debtTitle">Tambah Hutang</h3><p>Cicilan otomatis masuk hitungan pengeluaran tiap bulan.</p></div>
+    <div class="modal-body two">
+      <div class="field full">
+        <label for="dLabel">Label Hutang</label>
+        <input class="input" type="text" id="dLabel" maxlength="80" placeholder="mis. Cicilan motor / KTA" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+      <div class="field">
+        <label for="dTotal">Total Hutang</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="dTotal" step="1000" min="0" inputmode="decimal" placeholder="0"></div>
+      </div>
+      <div class="field">
+        <label for="dInst">Cicilan / Bulan</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="dInst" step="1000" min="0" inputmode="decimal" placeholder="0"></div>
+        <span class="field-hint" id="dInstHint"></span>
+      </div>
+      <div class="field">
+        <label for="dDueDay">Jatuh Tempo (tgl)</label>
+        <input class="input" type="number" id="dDueDay" min="1" max="31" inputmode="numeric" placeholder="mis. 25">
+      </div>
+      <div class="field">
+        <label for="dStart">Mulai Cicil</label>
+        <input class="input" type="month" id="dStart">
+      </div>
+      <div class="field full">
+        <label for="dFinal">Target Lunas (opsional)</label>
+        <input class="input" type="date" id="dFinal">
+      </div>
+      <div class="field full">
+        <label for="dNote">Catatan (opsional)</label>
+        <input class="input" type="text" id="dNote" maxlength="200" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="debtOverlay" type="button">Batal</button>
+      <button class="btn btn-primary" id="debtSave" type="button"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: PENGELUARAN ═══ -->
+<div class="overlay" id="expenseOverlay">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="expenseTitle">
+    <div class="modal-head"><h3 id="expenseTitle">Tambah Pengeluaran</h3><p>Rutin = berulang tiap bulan. Sekali = hanya bulan terpilih.</p></div>
+    <div class="modal-body two">
+      <div class="field full">
+        <label for="eLabel">Label</label>
+        <input class="input" type="text" id="eLabel" maxlength="80" placeholder="mis. Charging EV, listrik, kos" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+      <div class="field">
+        <label for="eAmount">Nominal / Bulan</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="eAmount" step="1000" min="0" inputmode="decimal" placeholder="0"></div>
+      </div>
+      <div class="field">
+        <label for="eCat">Kategori</label>
+        <select class="input" id="eCat">
+          <option value="tagihan">Tagihan</option>
+          <option value="transport">Transport / EV</option>
+          <option value="makan">Makan</option>
+          <option value="keluarga">Keluarga</option>
+          <option value="lainnya">Lainnya</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="eType">Tipe</label>
+        <select class="input" id="eType">
+          <option value="rutin">Rutin tiap bulan</option>
+          <option value="sekali">Sekali (bulan ini)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="eDueDay">Tanggal Tagihan</label>
+        <input class="input" type="number" id="eDueDay" min="1" max="31" inputmode="numeric" placeholder="opsional">
+      </div>
+      <div class="field" id="eStartWrap">
+        <label for="eStart">Mulai</label>
+        <input class="input" type="month" id="eStart">
+      </div>
+      <div class="field" id="eEndWrap">
+        <label for="eEnd">Selesai (opsional)</label>
+        <input class="input" type="month" id="eEnd">
+      </div>
+      <div class="field" id="eMonthWrap" style="display:none">
+        <label for="eMonth">Bulan</label>
+        <input class="input" type="month" id="eMonth">
+      </div>
+      <div class="field full">
+        <label for="eNote">Catatan (opsional)</label>
+        <input class="input" type="text" id="eNote" maxlength="200" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="expenseOverlay" type="button">Batal</button>
+      <button class="btn btn-primary" id="expenseSave" type="button"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: SETTINGS ═══ -->
+<div class="overlay" id="settingsOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+    <div class="modal-head"><h3 id="setTitle">Pengaturan</h3><p>Mata uang untuk halaman keuangan. Jurnal trading tetap terpisah.</p></div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="setCur">Mata Uang Keuangan</label>
+        <select class="input" id="setCur">
+          <option value="IDR">IDR — Rupiah</option>
+          <option value="USD">USD — Dolar</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="settingsOverlay" type="button">Batal</button>
+      <button class="btn btn-primary" id="setSave" type="button"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: KONFIRMASI ═══ -->
+<div class="overlay" id="confirmOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-head"><h3 id="confirmTitle">Hapus?</h3><p id="confirmText">—</p></div>
+    <div class="modal-foot">
+      <button class="btn" id="confirmCancel" type="button">Batal</button>
+      <button class="btn btn-danger" id="confirmOk" type="button">Hapus</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ════════════════════════════════════════════════════════
+  //  KONFIG
+  // ════════════════════════════════════════════════════════
+  const WORKER_URL = 'https://worker-bot.jihadwajib68.workers.dev';
+  const API_BASE = (function () {
+    try {
+      if (location.protocol === 'file:' || !location.host) return WORKER_URL;
+      return location.host === new URL(WORKER_URL).host ? '' : WORKER_URL;
+    } catch (e) { return WORKER_URL; }
+  })();
+
+  const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const CUR = {
+    IDR: { sym: 'Rp', dec: 0, locale: 'id-ID', gap: ' ' },
+    USD: { sym: '$', dec: 2, locale: 'en-US', gap: '' }
+  };
+
+  const CAT_COLOR = {
+    tagihan: '#fbbf24', transport: '#6f9cf2', makan: '#f98080',
+    keluarga: '#b49cfb', cicilan: '#a78bfa', lainnya: '#7b8494'
+  };
+
+  const state = {
+    month: todayStr().slice(0, 7),
+    today: todayStr(),
+    data: null,
+    settings: { finance_currency: 'IDR' },
+    expenseTab: 'semua',
+    editing: { income: null, debt: null, expense: null },
+    loaded: false
+  };
+
+  let trendChart = null, catChart = null, confirmResolver = null;
+  const $ = (id) => document.getElementById(id);
+
+  // ════════════════════════════════════════════════════════
+  //  UTIL
+  // ════════════════════════════════════════════════════════
+  function todayStr() {
+    const d = new Date();
+    return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
+  }
+
+  const curConf = () => CUR[state.settings.finance_currency] || CUR.IDR;
+
+  function num(v, dec) {
+    const c = curConf();
+    const d = dec === undefined ? c.dec : dec;
+    const n = Number(v);
+    if (!isFinite(n)) return '—';
+    return n.toLocaleString(c.locale, { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
+  function money(v, signed) {
+    const c = curConf();
+    const n = Number(v) || 0;
+    const sign = n < 0 ? '-' : signed && n > 0 ? '+' : '';
+    return sign + c.sym + c.gap + num(Math.abs(n));
+  }
+
+  function compact(v) {
+    const c = curConf();
+    const n = Math.abs(Number(v) || 0);
+    if (c.sym === 'Rp') {
+      if (n >= 1e9) return (n / 1e9).toFixed(1) + 'M';
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'jt';
+      if (n >= 1e3) return Math.round(n / 1e3) + 'rb';
+      return String(Math.round(n));
+    }
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+    return String(Math.round(n));
+  }
+
+  const monthLabel = (m, short) => {
+    const [y, mm] = m.split('-').map(Number);
+    return (short ? MONTHS_SHORT : MONTHS)[mm - 1] + ' ' + y;
+  };
+
+  function monthShift(m, delta) {
+    const [y, mm] = m.split('-').map(Number);
+    const d = new Date(y, mm - 1 + delta, 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  function fmtDate(s) {
+    const p = String(s).split('-').map(Number);
+    return p[2] + ' ' + MONTHS_SHORT[p[1] - 1];
+  }
+
+  const toneClass = (v) => (v > 0 ? 'text-green' : v < 0 ? 'text-red' : 'text-sec');
+  const capital = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  API + UI DASAR
+  // ════════════════════════════════════════════════════════
+  async function api(path, options) {
+    const res = await fetch(API_BASE + path, Object.assign({ cache: 'no-store' }, options || {}));
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* noop */ }
+    if (!res.ok || (data && data.ok === false)) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    return data;
+  }
+
+  const post = (path, body) => api(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+
+  const ICONS = {
+    success: '<polyline points="20 6 9 17 4 12"/>',
+    error: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'
+  };
+
+  function toast(msg, type) {
+    const kind = type || 'info';
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.innerHTML = '<svg class="toast-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">' +
+      ICONS[kind] + '</svg><span>' + escapeHtml(msg) + '</span>';
+    $('toasts').appendChild(el);
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 260); }, 3600);
+  }
+
+  const openModal = (id) => $(id).classList.add('show');
+  const closeModal = (id) => $(id).classList.remove('show');
+
+  function confirmDialog(title, text, okLabel) {
+    $('confirmTitle').textContent = title;
+    $('confirmText').textContent = text;
+    $('confirmOk').textContent = okLabel || 'Hapus';
+    openModal('confirmOverlay');
+    $('confirmOk').focus();
+    return new Promise((r) => { confirmResolver = r; });
+  }
+
+  function closeConfirm(v) {
+    closeModal('confirmOverlay');
+    if (confirmResolver) { confirmResolver(v); confirmResolver = null; }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  LOAD
+  // ════════════════════════════════════════════════════════
+  async function load(silent) {
+    if (!silent) setStatus('load');
+    try {
+      state.today = todayStr();
+      const data = await api('/api/finance?month=' + state.month + '&today=' + state.today);
+      state.data = data;
+      state.settings = data.settings || state.settings;
+      state.loaded = true;
+
+      document.querySelectorAll('.fin-sym').forEach((el) => { el.textContent = curConf().sym; });
+      renderHeader();
+      renderHero();
+      renderStats();
+      renderAlloc();
+      renderTrend();
+      renderCategoryChart();
+      renderDebts();
+      renderIncomes();
+      renderExpenses();
+      setStatus('ok');
+    } catch (e) {
+      setStatus('err');
+      toast('Gagal memuat: ' + e.message, 'error');
+    }
+  }
+
+  function setStatus(kind) {
+    const pill = $('statusPill');
+    pill.className = 'status-pill ' + (kind === 'ok' ? 'live' : kind === 'err' ? 'off' : 'idle');
+    $('statusText').textContent = kind === 'ok' ? 'tersinkron' : kind === 'err' ? 'offline' : 'memuat';
+  }
+
+  function renderHeader() {
+    const s = state.data.summary;
+    $('monthLabel').innerHTML = monthLabel(state.month, true) +
+      '<small>' + (s.is_current_month ? 'bulan berjalan' : 'arsip') + '</small>';
+    $('monthToday').style.display = s.is_current_month ? 'none' : 'inline-flex';
+    $('pageSub').textContent = s.is_current_month
+      ? 'Sisa ' + s.days_left + ' hari · jatah ' + money(s.daily_allowance) + '/hari'
+      : 'Arsip ' + monthLabel(state.month) + ' · ' + s.days_in_month + ' hari';
+  }
+
+  // ── HERO ──
+  function renderHero() {
+    const s = state.data.summary;
+
+    const bv = $('bufferValue');
+    bv.textContent = money(s.buffer, true);
+    bv.style.webkitTextFillColor = s.buffer < 0 ? 'var(--red-bright)' : '';
+    bv.style.color = s.buffer < 0 ? 'var(--red-bright)' : '';
+
+    const bm = $('bufferMeta');
+    bm.className = 'hero-meta ' + (s.buffer > 0 ? 'up' : s.buffer < 0 ? 'down' : '');
+    if (s.income_total <= 0) {
+      bm.innerHTML = '<span>belum ada pemasukan bulan ini</span>';
+    } else if (s.buffer < 0) {
+      bm.innerHTML = '<span class="meta-badge">!</span><span>defisit ' + num(Math.abs(s.buffer_pct)) +
+        '% dari pemasukan</span>';
+    } else {
+      bm.innerHTML = '<span class="meta-badge">↑</span><span>' + num(s.buffer_pct) + '% tersisa · ' +
+        money(s.daily_allowance) + '/hari untuk ' + s.days_left + ' hari</span>';
+    }
+
+    $('incomeValue').textContent = money(s.income_total);
+    const inc = state.data.incomes;
+    $('incomeMeta').innerHTML = '<span>' + (inc.length ? inc.length + ' sumber · ' +
+      escapeHtml(inc[0].label) : 'belum diinput') + '</span>';
+
+    $('outflowValue').textContent = money(s.outflow_total);
+    $('outflowValue').style.color = 'var(--text-primary)';
+    $('outflowMeta').innerHTML = '<span>cicilan ' + compact(s.installment_total) +
+      ' · rutin ' + compact(s.expense_rutin) + ' · lain ' + compact(s.expense_sekali) + '</span>';
+  }
+
+  // ── STATS ──
+  function renderStats() {
+    const s = state.data.summary;
+    const d = state.data.debt_overview;
+
+    $('sInstallment').textContent = money(s.installment_total);
+    $('sInstallmentMeta').textContent = s.installment_total > 0
+      ? 'dibayar ' + money(s.installment_paid) + ' · sisa ' + money(s.installment_unpaid)
+      : 'tidak ada cicilan bulan ini';
+
+    $('sFixed').textContent = money(s.expense_rutin);
+    $('sFixedMeta').textContent = state.data.expenses.filter((e) => e.type === 'rutin').length + ' pos rutin';
+
+    $('sVar').textContent = money(s.expense_sekali);
+    $('sVarMeta').textContent = state.data.expenses.filter((e) => e.type !== 'rutin').length + ' pos bulan ini';
+
+    $('sDebt').textContent = money(d.total_remaining);
+    $('sDebtMeta').textContent = d.active_count + ' aktif · ' + d.lunas_count + ' lunas · terbayar ' + compact(d.total_paid);
+
+    if (d.next_due) {
+      $('sDue').textContent = fmtDate(d.next_due.date);
+      const days = d.next_due.days;
+      const when = days < 0 ? 'telat ' + Math.abs(days) + ' hari' : days === 0 ? 'hari ini' : days + ' hari lagi';
+      $('sDue').className = 'stat-value ' + (days < 0 ? 'text-red' : days <= 3 ? 'text-gold' : '');
+      $('sDueMeta').textContent = escapeHtml(d.next_due.label) + ' · ' + money(d.next_due.amount) + ' · ' + when;
+    } else {
+      $('sDue').textContent = '—';
+      $('sDue').className = 'stat-value';
+      $('sDueMeta').textContent = d.active_count ? 'semua cicilan bulan ini sudah dibayar' : 'tidak ada tagihan';
+    }
+
+    const t = $('sTrading');
+    t.textContent = s.trading_days ? (s.trading_pnl >= 0 ? '+' : '') + '$' + Math.abs(s.trading_pnl).toFixed(2) : '—';
+    t.className = 'stat-value ' + toneClass(s.trading_pnl);
+    $('sTradingMeta').textContent = s.trading_days
+      ? s.trading_days + ' hari trading · tidak dihitung ke buffer'
+      : 'belum ada entry jurnal bulan ini';
+  }
+
+  // ── ALOKASI ──
+  function renderAlloc() {
+    const s = state.data.summary;
+    const income = s.income_total;
+    const segs = [
+      { k: 'debt', label: 'Cicilan', value: s.installment_total },
+      { k: 'fixed', label: 'Rutin', value: s.expense_rutin },
+      { k: 'var', label: 'Lain-lain', value: s.expense_sekali }
+    ];
+
+    if (s.buffer >= 0) segs.push({ k: 'buffer', label: 'Sisa', value: s.buffer });
+    else segs.push({ k: 'over', label: 'Defisit', value: Math.abs(s.buffer) });
+
+    const base = income > 0 ? Math.max(income, s.outflow_total) : s.outflow_total;
+    $('allocSub').textContent = income > 0
+      ? 'dari pemasukan ' + money(income) + ' · ' + monthLabel(state.month)
+      : 'belum ada pemasukan · menampilkan proporsi pengeluaran';
+
+    $('allocBar').innerHTML = segs.filter((x) => x.value > 0).map((x) =>
+      '<div class="alloc-seg ' + x.k + '" data-w="' + (base > 0 ? (x.value / base) * 100 : 0) +
+      '" title="' + x.label + ' ' + money(x.value) + '"></div>'
+    ).join('');
+
+    $('allocLegend').innerHTML = segs.map((x) =>
+      '<div class="alloc-item"><span class="alloc-swatch ' + x.k + '" aria-hidden="true"></span><div>' +
+      '<div class="alloc-k">' + x.label + '</div>' +
+      '<div class="alloc-v ' + (x.k === 'over' ? 'text-red' : x.k === 'buffer' ? 'text-gold' : '') + '">' +
+      money(x.value) + (base > 0 ? ' · ' + Math.round((x.value / base) * 100) + '%' : '') + '</div></div></div>'
+    ).join('');
+
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.alloc-seg').forEach((el) => { el.style.width = el.dataset.w + '%'; });
+    });
+  }
+
+  // ── CHART: TREN ──
+  function renderTrend() {
+    const canvas = $('trendChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const rows = state.data.trend || [];
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    if (!rows.length) return;
+
+    trendChart = new Chart(canvas.getContext('2d'), {
+      data: {
+        labels: rows.map((r) => monthLabel(r.month, true)),
+        datasets: [
+          { type: 'bar', label: 'Pemasukan', data: rows.map((r) => r.income),
+            backgroundColor: 'rgba(16,185,129,.55)', hoverBackgroundColor: 'rgba(61,219,162,.85)',
+            borderRadius: 4, maxBarThickness: 26, order: 2 },
+          { type: 'bar', label: 'Pengeluaran', data: rows.map((r) => r.outflow),
+            backgroundColor: 'rgba(239,68,68,.5)', hoverBackgroundColor: 'rgba(249,128,128,.82)',
+            borderRadius: 4, maxBarThickness: 26, order: 2 },
+          { type: 'line', label: 'Sisa', data: rows.map((r) => r.buffer),
+            borderColor: '#e3b341', backgroundColor: '#f5c659', borderWidth: 2.5, tension: .35,
+            pointRadius: 3.5, pointHoverRadius: 6, pointBorderColor: '#0a0d14', pointBorderWidth: 2, order: 1 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        animation: REDUCED ? false : { duration: 900, easing: 'easeOutQuart' },
+        plugins: {
+          legend: {
+            display: true, position: 'bottom',
+            labels: { color: '#a6aebd', boxWidth: 10, boxHeight: 10, usePointStyle: true,
+              pointStyle: 'circle', padding: 16, font: { family: 'Manrope', size: 12, weight: '600' } }
+          },
+          tooltip: {
+            backgroundColor: '#131824', borderColor: '#7a5c1a', borderWidth: 1, padding: 13,
+            cornerRadius: 10, titleColor: '#a6aebd', bodyColor: '#f0f4fa',
+            titleFont: { family: 'JetBrains Mono', size: 11, weight: '600' },
+            bodyFont: { family: 'Manrope', size: 13, weight: '600' },
+            callbacks: { label: (c) => c.dataset.label + ': ' + money(c.parsed.y) }
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: '#7b8494', font: { family: 'JetBrains Mono', size: 10.5 }, padding: 8 },
+               border: { color: 'rgba(255,255,255,.06)' } },
+          y: { grid: { color: (c) => (c.tick.value === 0 ? 'rgba(255,255,255,.14)' : 'rgba(255,255,255,.025)'), drawTicks: false },
+               ticks: { color: '#7b8494', font: { family: 'JetBrains Mono', size: 10.5 }, padding: 10, callback: (v) => compact(v) },
+               border: { color: 'rgba(255,255,255,.06)' } }
+        }
+      }
+    });
+  }
+
+  // ── CHART: KOMPOSISI ──
+  function renderCategoryChart() {
+    const canvas = $('catChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const s = state.data.summary;
+
+    const parts = s.expense_by_category.map((c) => ({
+      label: capital(c.category), value: c.total, color: CAT_COLOR[c.category] || CAT_COLOR.lainnya
+    }));
+    if (s.installment_total > 0) parts.unshift({ label: 'Cicilan', value: s.installment_total, color: '#a78bfa' });
+
+    if (catChart) { catChart.destroy(); catChart = null; }
+    $('donutTotal').textContent = compact(s.outflow_total);
+    $('donutMeta').textContent = parts.length ? parts.length + ' pos' : '—';
+
+    if (!parts.length) {
+      $('donutTotal').textContent = '—';
+      return;
+    }
+
+    catChart = new Chart(canvas.getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: parts.map((p) => p.label),
+        datasets: [{
+          data: parts.map((p) => p.value),
+          backgroundColor: parts.map((p) => p.color),
+          borderColor: '#131824', borderWidth: 3, hoverOffset: 8
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        animation: REDUCED ? false : { duration: 900, easing: 'easeOutQuart' },
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: '#a6aebd', boxWidth: 9, boxHeight: 9, usePointStyle: true, pointStyle: 'circle',
+              padding: 13, font: { family: 'Manrope', size: 11.5, weight: '600' } }
+          },
+          tooltip: {
+            backgroundColor: '#131824', borderColor: '#7a5c1a', borderWidth: 1, padding: 12,
+            cornerRadius: 10, titleColor: '#a6aebd', bodyColor: '#f0f4fa', displayColors: false,
+            bodyFont: { family: 'Manrope', size: 13, weight: '700' },
+            callbacks: {
+              label: (c) => {
+                const total = c.dataset.data.reduce((a, b) => a + b, 0);
+                return money(c.parsed) + ' · ' + Math.round((c.parsed / total) * 100) + '%';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ── HUTANG ──
+  function renderDebts() {
+    const debts = state.data.debts || [];
+    const ov = state.data.debt_overview;
+    $('debtMeta').textContent = debts.length
+      ? money(ov.total_remaining) + ' sisa · ' + ov.active_count + ' aktif'
+      : '—';
+
+    if (!debts.length) return;
+
+    const cards = debts.map((d) => {
+      const lunas = d.status === 'lunas';
+      let chipCls = 'due-chip', chipTxt;
+      if (lunas) { chipCls += ' paid'; chipTxt = 'selesai'; }
+      else if (d.paid_this_month) { chipCls += ' paid'; chipTxt = 'dibayar bulan ini'; }
+      else if (!d.active_this_month) { chipTxt = 'belum mulai'; }
+      else if (d.days_to_due < 0) { chipCls += ' late'; chipTxt = 'telat ' + Math.abs(d.days_to_due) + ' hari'; }
+      else if (d.days_to_due <= 5) { chipCls += ' soon'; chipTxt = d.days_to_due === 0 ? 'jatuh tempo hari ini' : d.days_to_due + ' hari lagi'; }
+      else { chipTxt = 'tempo ' + fmtDate(d.due_date_this_month); }
+
+      const payBtn = lunas ? '' : d.paid_this_month
+        ? '<button class="mini-btn" data-unpay="' + d.id + '" aria-label="Batalkan pembayaran">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg></button>'
+        : '<button class="mini-btn" data-pay="' + d.id + '" aria-label="Tandai cicilan bulan ini dibayar" title="Tandai dibayar">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></button>';
+
+      return '<div class="debt-card' + (lunas ? ' lunas' : '') + '">' +
+        '<div class="debt-top"><div><div class="debt-name">' + escapeHtml(d.label) + '</div>' +
+        '<div class="debt-sub">' + money(d.monthly_installment) + '/bln' +
+          (d.due_day ? ' · tgl ' + d.due_day : '') +
+          (d.months_left ? ' · ' + d.months_left + '× lagi' : '') + '</div></div>' +
+        '<div class="debt-actions">' + payBtn +
+          '<button class="mini-btn" data-edit-debt="' + d.id + '" aria-label="Edit hutang">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
+          '<button class="mini-btn danger" data-del-debt="' + d.id + '" aria-label="Hapus hutang">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>' +
+        '</div></div>' +
+        '<div class="debt-figures"><span class="debt-remaining ' + (lunas ? 'text-green' : '') + '">' +
+          money(d.remaining) + '</span><span class="debt-of">dari ' + money(d.total_amount) + '</span></div>' +
+        '<div class="progress"><div class="progress-fill' + (lunas ? ' done' : '') + '" data-w="' +
+          Math.min(d.progress_pct, 100) + '"></div></div>' +
+        '<div class="debt-meta"><span class="' + chipCls + '">' + chipTxt + '</span>' +
+        '<span class="debt-of">' + num(d.progress_pct, 0) + '% terbayar</span></div>' +
+        '</div>';
+    }).join('');
+
+    $('debtBody').innerHTML = '<div class="debt-grid">' + cards + '</div>';
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.progress-fill').forEach((el) => { el.style.width = el.dataset.w + '%'; });
+    });
+  }
+
+  // ── PEMASUKAN ──
+  function renderIncomes() {
+    const rows = state.data.incomes || [];
+    if (!rows.length) {
+      $('incomeBody').innerHTML =
+        '<div class="empty"><div class="empty-icon">' +
+        '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></div>' +
+        '<div class="empty-title">Belum ada pemasukan ' + monthLabel(state.month, true) + '</div>' +
+        '<div class="empty-sub">klik tambah untuk input gaji</div></div>';
+      return;
+    }
+
+    const total = rows.reduce((a, r) => a + r.amount, 0);
+    $('incomeBody').innerHTML = '<div class="list">' + rows.map((r) =>
+      '<div class="list-row">' +
+      '<span class="list-dot" style="background:var(--green-bright)" aria-hidden="true"></span>' +
+      '<div class="list-main"><div class="list-title">' + escapeHtml(r.label) + '</div>' +
+      '<div class="list-sub"><span class="cat ' + r.category + '">' + r.category + '</span>' +
+        (r.note ? ' · ' + escapeHtml(r.note) : '') + '</div></div>' +
+      '<span class="list-amount text-green">' + money(r.amount) + '</span>' +
+      '<div class="list-actions">' +
+        '<button class="mini-btn" data-edit-income="' + r.id + '" aria-label="Edit pemasukan">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
+        '<button class="mini-btn danger" data-del-income="' + r.id + '" aria-label="Hapus pemasukan">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>' +
+      '</div></div>'
+    ).join('') + '</div>' +
+      '<div class="list-foot"><span>Total pemasukan</span><span class="total text-green">' + money(total) + '</span></div>';
+  }
+
+  // ── PENGELUARAN ──
+  function renderExpenses() {
+    const all = state.data.expenses || [];
+    const rows = state.expenseTab === 'semua' ? all
+      : all.filter((e) => (state.expenseTab === 'rutin' ? e.type === 'rutin' : e.type !== 'rutin'));
+
+    if (!rows.length) {
+      $('expenseBody').innerHTML =
+        '<div class="empty"><div class="empty-icon">' +
+        '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/></svg></div>' +
+        '<div class="empty-title">Tidak ada pengeluaran ' +
+          (state.expenseTab === 'semua' ? 'bulan ini' : state.expenseTab) + '</div>' +
+        '<div class="empty-sub">mis. EV 500rb/bulan, listrik, kos</div></div>';
+      return;
+    }
+
+    const total = rows.reduce((a, r) => a + r.amount, 0);
+    $('expenseBody').innerHTML = '<div class="list">' + rows.map((e) =>
+      '<div class="list-row">' +
+      '<span class="list-dot" style="background:' + (CAT_COLOR[e.category] || CAT_COLOR.lainnya) + '" aria-hidden="true"></span>' +
+      '<div class="list-main"><div class="list-title">' + escapeHtml(e.label) + '</div>' +
+      '<div class="list-sub"><span class="cat ' + e.category + '">' + e.category + '</span> · ' +
+        (e.type === 'rutin' ? 'rutin' + (e.start_month ? ' sejak ' + monthLabel(e.start_month, true) : '') : 'sekali') +
+        (e.due_day ? ' · tgl ' + e.due_day : '') + '</div></div>' +
+      '<span class="list-amount">' + money(e.amount) + '</span>' +
+      '<div class="list-actions">' +
+        '<button class="mini-btn" data-edit-expense="' + e.id + '" aria-label="Edit pengeluaran">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
+        '<button class="mini-btn danger" data-del-expense="' + e.id + '" aria-label="Hapus pengeluaran">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>' +
+      '</div></div>'
+    ).join('') + '</div>' +
+      '<div class="list-foot"><span>Total ' + (state.expenseTab === 'semua' ? 'pengeluaran' : state.expenseTab) +
+      '</span><span class="total">' + money(total) + '</span></div>';
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  FORM: PEMASUKAN
+  // ════════════════════════════════════════════════════════
+  function openIncome(id) {
+    const row = id ? state.data.incomes.find((i) => i.id === id) : null;
+    state.editing.income = row ? row.id : null;
+    $('incomeTitle').textContent = row ? 'Edit Pemasukan' : 'Tambah Pemasukan';
+    $('incomeMonthHint').textContent = 'Dicatat untuk ' + monthLabel(state.month) + '.';
+    $('iLabel').value = row ? row.label : '';
+    $('iAmount').value = row ? row.amount : '';
+    $('iCat').value = row ? row.category : 'gaji';
+    $('iNote').value = row && row.note ? row.note : '';
+    openModal('incomeOverlay');
+    $('iLabel').focus();
+  }
+
+  async function saveIncome() {
+    const btn = $('incomeSave');
+    const payload = {
+      id: state.editing.income || undefined,
+      month: state.month,
+      label: $('iLabel').value.trim(),
+      amount: parseFloat($('iAmount').value),
+      category: $('iCat').value,
+      note: $('iNote').value.trim() || null
+    };
+    if (!payload.label) { toast('Label wajib diisi', 'error'); $('iLabel').focus(); return; }
+    if (!isFinite(payload.amount) || payload.amount <= 0) { toast('Jumlah belum valid', 'error'); $('iAmount').focus(); return; }
+
+    btn.classList.add('loading'); btn.disabled = true;
+    try {
+      await post('/api/finance/income', payload);
+      closeModal('incomeOverlay');
+      toast('Pemasukan tersimpan · ' + money(payload.amount), 'success');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { btn.classList.remove('loading'); btn.disabled = false; }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  FORM: HUTANG
+  // ════════════════════════════════════════════════════════
+  function openDebt(id) {
+    const d = id ? state.data.debts.find((x) => x.id === id) : null;
+    state.editing.debt = d ? d.id : null;
+    $('debtTitle').textContent = d ? 'Edit Hutang' : 'Tambah Hutang';
+    $('dLabel').value = d ? d.label : '';
+    $('dTotal').value = d ? d.total_amount : '';
+    $('dInst').value = d ? d.monthly_installment : '';
+    $('dDueDay').value = d && d.due_day ? d.due_day : '';
+    $('dStart').value = d && d.start_month ? d.start_month : state.month;
+    $('dFinal').value = d && d.final_due_date ? d.final_due_date : '';
+    $('dNote').value = d && d.note ? d.note : '';
+    updateDebtHint();
+    openModal('debtOverlay');
+    $('dLabel').focus();
+  }
+
+  function updateDebtHint() {
+    const total = parseFloat($('dTotal').value);
+    const inst = parseFloat($('dInst').value);
+    const hint = $('dInstHint');
+    if (isFinite(total) && isFinite(inst) && inst > 0 && total > 0) {
+      const months = Math.ceil(total / inst);
+      hint.textContent = '≈ ' + months + ' bulan (' + money(inst) + ' × ' + months + ')';
+      hint.className = 'field-hint ' + (inst > total ? 'danger' : 'ok');
+    } else {
+      hint.textContent = '';
+      hint.className = 'field-hint';
+    }
+  }
+
+  async function saveDebt() {
+    const btn = $('debtSave');
+    const payload = {
+      id: state.editing.debt || undefined,
+      label: $('dLabel').value.trim(),
+      total_amount: parseFloat($('dTotal').value),
+      monthly_installment: parseFloat($('dInst').value),
+      due_day: $('dDueDay').value === '' ? null : parseInt($('dDueDay').value, 10),
+      start_month: $('dStart').value || null,
+      final_due_date: $('dFinal').value || null,
+      note: $('dNote').value.trim() || null
+    };
+    if (!payload.label) { toast('Label hutang wajib diisi', 'error'); $('dLabel').focus(); return; }
+    if (!isFinite(payload.total_amount) || payload.total_amount <= 0) { toast('Total hutang belum valid', 'error'); $('dTotal').focus(); return; }
+    if (!isFinite(payload.monthly_installment) || payload.monthly_installment <= 0) { toast('Cicilan belum valid', 'error'); $('dInst').focus(); return; }
+
+    btn.classList.add('loading'); btn.disabled = true;
+    try {
+      await post('/api/finance/debt', payload);
+      closeModal('debtOverlay');
+      toast('Hutang tersimpan', 'success');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { btn.classList.remove('loading'); btn.disabled = false; }
+  }
+
+  async function payDebt(id) {
+    const d = state.data.debts.find((x) => x.id === id);
+    if (!d) return;
+    try {
+      await post('/api/finance/debt/pay', { debt_id: id, month: state.month, amount: d.due_this_month || d.monthly_installment });
+      toast('Cicilan ' + d.label + ' ditandai dibayar', 'success');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  async function unpayDebt(id) {
+    try {
+      await api('/api/finance/debt/pay?debt_id=' + id + '&month=' + state.month, { method: 'DELETE' });
+      toast('Pembayaran dibatalkan', 'info');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  FORM: PENGELUARAN
+  // ════════════════════════════════════════════════════════
+  function toggleExpenseType() {
+    const rutin = $('eType').value === 'rutin';
+    $('eStartWrap').style.display = rutin ? 'flex' : 'none';
+    $('eEndWrap').style.display = rutin ? 'flex' : 'none';
+    $('eMonthWrap').style.display = rutin ? 'none' : 'flex';
+  }
+
+  function openExpense(id) {
+    const e = id ? state.data.expenses.find((x) => x.id === id) : null;
+    state.editing.expense = e ? e.id : null;
+    $('expenseTitle').textContent = e ? 'Edit Pengeluaran' : 'Tambah Pengeluaran';
+    $('eLabel').value = e ? e.label : '';
+    $('eAmount').value = e ? e.amount : '';
+    $('eCat').value = e ? e.category : 'tagihan';
+    $('eType').value = e ? e.type : 'rutin';
+    $('eDueDay').value = e && e.due_day ? e.due_day : '';
+    $('eStart').value = e && e.start_month ? e.start_month : state.month;
+    $('eEnd').value = e && e.end_month ? e.end_month : '';
+    $('eMonth').value = e && e.month ? e.month : state.month;
+    $('eNote').value = e && e.note ? e.note : '';
+    toggleExpenseType();
+    openModal('expenseOverlay');
+    $('eLabel').focus();
+  }
+
+  async function saveExpense() {
+    const btn = $('expenseSave');
+    const type = $('eType').value;
+    const payload = {
+      id: state.editing.expense || undefined,
+      label: $('eLabel').value.trim(),
+      amount: parseFloat($('eAmount').value),
+      category: $('eCat').value,
+      type: type,
+      due_day: $('eDueDay').value === '' ? null : parseInt($('eDueDay').value, 10),
+      note: $('eNote').value.trim() || null
+    };
+    if (type === 'rutin') {
+      payload.start_month = $('eStart').value || null;
+      payload.end_month = $('eEnd').value || null;
+    } else {
+      payload.month = $('eMonth').value || state.month;
+    }
+    if (!payload.label) { toast('Label wajib diisi', 'error'); $('eLabel').focus(); return; }
+    if (!isFinite(payload.amount) || payload.amount <= 0) { toast('Nominal belum valid', 'error'); $('eAmount').focus(); return; }
+
+    btn.classList.add('loading'); btn.disabled = true;
+    try {
+      await post('/api/finance/expense', payload);
+      closeModal('expenseOverlay');
+      toast('Pengeluaran tersimpan · ' + money(payload.amount), 'success');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { btn.classList.remove('loading'); btn.disabled = false; }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  HAPUS
+  // ════════════════════════════════════════════════════════
+  async function removeItem(kind, id) {
+    const map = {
+      income: { path: '/api/finance/income', list: 'incomes', title: 'Hapus pemasukan' },
+      debt: { path: '/api/finance/debt', list: 'debts', title: 'Hapus hutang' },
+      expense: { path: '/api/finance/expense', list: 'expenses', title: 'Hapus pengeluaran' }
+    }[kind];
+
+    const row = (state.data[map.list] || []).find((x) => x.id === id);
+    const extra = kind === 'debt' ? ' Seluruh riwayat pembayarannya ikut terhapus.' : '';
+    const ok = await confirmDialog(map.title + '?',
+      '“' + (row ? row.label : id) + '” akan dihapus permanen.' + extra, 'Hapus');
+    if (!ok) return;
+
+    try {
+      await api(map.path + '?id=' + id, { method: 'DELETE' });
+      toast('Data dihapus', 'success');
+      await load(true);
+    } catch (e) { toast('Gagal menghapus: ' + e.message, 'error'); }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  EVENTS
+  // ════════════════════════════════════════════════════════
+  $('monthPrev').addEventListener('click', () => { state.month = monthShift(state.month, -1); load(false); });
+  $('monthNext').addEventListener('click', () => { state.month = monthShift(state.month, 1); load(false); });
+  $('monthToday').addEventListener('click', () => { state.month = todayStr().slice(0, 7); load(false); });
+
+  $('refreshBtn').addEventListener('click', function () {
+    this.style.transform = 'rotate(360deg)';
+    setTimeout(() => { this.style.transform = ''; }, 500);
+    load(false);
+  });
+
+  $('addIncomeBtn').addEventListener('click', () => openIncome(null));
+  $('addDebtBtn').addEventListener('click', () => openDebt(null));
+  $('addExpenseBtn').addEventListener('click', () => openExpense(null));
+
+  $('incomeSave').addEventListener('click', saveIncome);
+  $('debtSave').addEventListener('click', saveDebt);
+  $('expenseSave').addEventListener('click', saveExpense);
+  $('eType').addEventListener('change', toggleExpenseType);
+  $('dTotal').addEventListener('input', updateDebtHint);
+  $('dInst').addEventListener('input', updateDebtHint);
+
+  $('debtBody').addEventListener('click', (ev) => {
+    const pay = ev.target.closest('[data-pay]');
+    if (pay) return payDebt(Number(pay.dataset.pay));
+    const unpay = ev.target.closest('[data-unpay]');
+    if (unpay) return unpayDebt(Number(unpay.dataset.unpay));
+    const edit = ev.target.closest('[data-edit-debt]');
+    if (edit) return openDebt(Number(edit.dataset.editDebt));
+    const del = ev.target.closest('[data-del-debt]');
+    if (del) return removeItem('debt', Number(del.dataset.delDebt));
+  });
+
+  $('incomeBody').addEventListener('click', (ev) => {
+    const edit = ev.target.closest('[data-edit-income]');
+    if (edit) return openIncome(Number(edit.dataset.editIncome));
+    const del = ev.target.closest('[data-del-income]');
+    if (del) return removeItem('income', Number(del.dataset.delIncome));
+  });
+
+  $('expenseBody').addEventListener('click', (ev) => {
+    const edit = ev.target.closest('[data-edit-expense]');
+    if (edit) return openExpense(Number(edit.dataset.editExpense));
+    const del = ev.target.closest('[data-del-expense]');
+    if (del) return removeItem('expense', Number(del.dataset.delExpense));
+  });
+
+  document.querySelectorAll('.tab[data-etab]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab[data-etab]').forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.expenseTab = tab.dataset.etab;
+      renderExpenses();
+    });
+  });
+
+  document.querySelectorAll('[data-close]').forEach((btn) => {
+    btn.addEventListener('click', () => closeModal(btn.dataset.close));
+  });
+
+  document.querySelectorAll('.overlay').forEach((ov) => {
+    ov.addEventListener('click', (ev) => {
+      if (ev.target !== ov) return;
+      if (ov.id === 'confirmOverlay') closeConfirm(false);
+      else closeModal(ov.id);
+    });
+  });
+
+  $('confirmCancel').addEventListener('click', () => closeConfirm(false));
+  $('confirmOk').addEventListener('click', () => closeConfirm(true));
+
+  $('settingsBtn').addEventListener('click', () => {
+    $('setCur').value = state.settings.finance_currency || 'IDR';
+    openModal('settingsOverlay');
+  });
+
+  $('setSave').addEventListener('click', async () => {
+    const btn = $('setSave');
+    btn.classList.add('loading'); btn.disabled = true;
+    try {
+      await post('/api/settings', { finance_currency: $('setCur').value });
+      closeModal('settingsOverlay');
+      toast('Pengaturan tersimpan', 'success');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { btn.classList.remove('loading'); btn.disabled = false; }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if ($('confirmOverlay').classList.contains('show')) return closeConfirm(false);
+    document.querySelectorAll('.overlay.show').forEach((ov) => ov.classList.remove('show'));
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.loaded) load(true);
+  });
+
+  load(false);
+})();
+</script>
+</body>
+</html>
