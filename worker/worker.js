@@ -67,12 +67,20 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ─────────────────────────────────────────────────────────
 //  SETTINGS
 // ─────────────────────────────────────────────────────────
-const SETTING_KEYS = ["initial_capital", "monthly_target", "currency", "finance_currency"];
-const STRING_SETTINGS = ["currency", "finance_currency"];
+const SETTING_KEYS = [
+  "initial_capital", "monthly_target", "currency", "finance_currency",
+  "carry_over", "carry_start_month", "carry_opening",
+];
+const STRING_SETTINGS = ["currency", "finance_currency", "carry_start_month"];
 
 async function readSettings(env) {
   const res = await env.DB.prepare("SELECT key, value FROM settings").all();
-  const out = { initial_capital: 0, monthly_target: 0, currency: "USD", finance_currency: "IDR" };
+  const out = {
+    initial_capital: 0, monthly_target: 0, currency: "USD", finance_currency: "IDR",
+    carry_over: 1,            // 1 = sisa bulan ini dibawa ke bulan berikutnya
+    carry_start_month: "",    // "" = otomatis dari bulan data paling awal
+    carry_opening: 0,         // saldo pembuka pada carry_start_month
+  };
   for (const row of res.results ?? []) {
     if (STRING_SETTINGS.includes(row.key)) out[row.key] = row.value;
     else out[row.key] = Number(row.value) || 0;
@@ -92,7 +100,10 @@ async function handleSettingsPost(request, env) {
   for (const key of SETTING_KEYS) {
     if (body[key] === undefined || body[key] === null) continue;
     let value = body[key];
-    if (STRING_SETTINGS.includes(key)) {
+    if (key === "carry_start_month") {
+      value = String(value).trim().slice(0, 7);
+      if (value && !isValidMonth(value)) return fail("Bulan mulai carry harus YYYY-MM");
+    } else if (STRING_SETTINGS.includes(key)) {
       value = String(value).slice(0, 8).toUpperCase();
     } else {
       const num = Number(value);
@@ -460,7 +471,7 @@ async function loadFinanceRaw(env) {
   };
 }
 
-function buildFinance(raw, month, today) {
+function buildFinance(raw, month, today, settings) {
   const paidByDebt = new Map();
   const paidByKey = new Map();
   for (const p of raw.payments) {
@@ -533,7 +544,47 @@ function buildFinance(raw, month, today) {
     };
   }
 
-  const cur = agg(month);
+  // ── Rantai carry-over: sisa bulan sebelumnya menjadi saldo awal bulan ini ──
+  const carryOn = Number(settings.carry_over) !== 0;
+
+  const candidates = [];
+  for (const i of raw.incomes) candidates.push(i.month);
+  for (const e of raw.expenses) {
+    if (e.month) candidates.push(e.month);
+    if (e.start_month) candidates.push(e.start_month);
+  }
+  for (const d of raw.debts) if (d.start_month) candidates.push(d.start_month);
+  candidates.sort();
+
+  let carryStart = isValidMonth(settings.carry_start_month)
+    ? settings.carry_start_month
+    : candidates[0] || month;
+  if (carryStart > month) carryStart = month;
+  // Batasi panjang rantai agar tidak pernah meledak
+  const floorMonth = monthShift(month, -239);
+  if (carryStart < floorMonth) carryStart = floorMonth;
+
+  const trendStart = monthShift(month, -5);
+  const chainStart = carryStart < trendStart ? carryStart : trendStart;
+
+  const chain = [];
+  let carry = 0;
+  let started = false;
+  for (let m = chainStart; m <= month; m = monthShift(m, 1)) {
+    const a = agg(m);
+    if (!started && m >= carryStart) {
+      started = true;
+      carry = round2(Number(settings.carry_opening) || 0);
+    }
+    const carryIn = carryOn && started ? round2(carry) : 0;
+    a.carry_in = carryIn;
+    a.available = round2(carryIn + a.income);
+    a.net = round2(carryIn + a.buffer);
+    chain.push(a);
+    if (carryOn && started) carry = a.net;
+  }
+
+  const cur = chain[chain.length - 1];
   const incomes = raw.incomes.filter((i) => i.month === month);
   const expenses = raw.expenses
     .filter((e) => expenseAppliesTo(e, month))
@@ -569,8 +620,7 @@ function buildFinance(raw, month, today) {
     .filter((d) => d.active_this_month && !d.paid_this_month)
     .sort((a, b) => a.due_date_this_month.localeCompare(b.due_date_this_month));
 
-  const trend = [];
-  for (let i = 5; i >= 0; i--) trend.push(agg(monthShift(month, -i)));
+  const trend = chain.slice(-6);
 
   return {
     month,
@@ -592,7 +642,13 @@ function buildFinance(raw, month, today) {
       outflow_total: cur.outflow,
       buffer: cur.buffer,
       buffer_pct: cur.income > 0 ? round2((cur.buffer / cur.income) * 100) : 0,
-      daily_allowance: round2(Math.max(cur.buffer, 0) / daysLeft),
+      carry_in: cur.carry_in,
+      carry_enabled: carryOn,
+      carry_start_month: carryStart,
+      available: cur.available,
+      net: cur.net,
+      net_pct: cur.available > 0 ? round2((cur.net / cur.available) * 100) : 0,
+      daily_allowance: round2(Math.max(cur.net, 0) / daysLeft),
       days_left: daysLeft,
       days_in_month: dim,
       is_current_month: isCurrentMonth,
@@ -638,7 +694,7 @@ async function handleFinance(request, env) {
   if (!isValidMonth(month)) month = today.slice(0, 7);
 
   const [raw, settings] = await Promise.all([loadFinanceRaw(env), readSettings(env)]);
-  return json({ ok: true, settings, ...buildFinance(raw, month, today) });
+  return json({ ok: true, settings, ...buildFinance(raw, month, today, settings) });
 }
 
 // ── Pemasukan ──
@@ -895,4 +951,3 @@ export default {
     }
   },
 };
-
