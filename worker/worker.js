@@ -69,7 +69,7 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ─────────────────────────────────────────────────────────
 const SETTING_KEYS = [
   "initial_capital", "monthly_target", "currency", "finance_currency",
-  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past",
+  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past", "usd_rate",
 ];
 const STRING_SETTINGS = ["currency", "finance_currency", "carry_start_month"];
 
@@ -81,6 +81,7 @@ async function readSettings(env) {
     carry_start_month: "",    // "" = otomatis dari bulan data paling awal
     carry_opening: 0,         // saldo pembuka pada carry_start_month
     auto_pay_past: 1,         // anggap cicilan bulan-bulan lalu sudah dibayar
+    usd_rate: 16000,          // kurs default USD → mata uang keuangan
   };
   for (const row of res.results ?? []) {
     if (STRING_SETTINGS.includes(row.key)) out[row.key] = row.value;
@@ -456,7 +457,7 @@ const expenseAppliesTo = (e, month) =>
     : e.month === month;
 
 async function loadFinanceRaw(env) {
-  const [inc, debts, pays, exp, trading] = await Promise.all([
+  const [inc, debts, pays, exp, trading, wd] = await Promise.all([
     env.DB.prepare("SELECT * FROM incomes ORDER BY month DESC, id DESC").all(),
     env.DB.prepare("SELECT * FROM debts ORDER BY id ASC").all(),
     env.DB.prepare("SELECT * FROM debt_payments").all(),
@@ -467,6 +468,7 @@ async function loadFinanceRaw(env) {
               COUNT(*) AS days
          FROM daily_entries GROUP BY substr(date,1,7)`
     ).all(),
+    env.DB.prepare("SELECT * FROM withdrawals ORDER BY date DESC, id DESC").all(),
   ]);
 
   return {
@@ -475,6 +477,15 @@ async function loadFinanceRaw(env) {
     payments: pays.results ?? [],
     expenses: exp.results ?? [],
     trading: trading.results ?? [],
+    withdrawals: (wd.results ?? []).map((w) => ({
+      id: w.id,
+      date: w.date,
+      month: w.date.slice(0, 7),
+      amount_usd: round2(w.amount_usd),
+      rate: round2(w.rate),
+      amount: round2(w.amount),
+      note: w.note ?? null,
+    })),
   };
 }
 
@@ -640,9 +651,13 @@ function buildFinance(raw, month, today, settings) {
 
   // ── Agregat satu bulan ──
   function agg(m) {
-    const income = raw.incomes
+    const incomeManual = raw.incomes
       .filter((i) => i.month === m)
       .reduce((a, i) => a + i.amount, 0);
+    const incomeWithdraw = raw.withdrawals
+      .filter((w) => w.month === m)
+      .reduce((a, w) => a + w.amount, 0);
+    const income = incomeManual + incomeWithdraw;
 
     const installment = debts.reduce((a, d) => a + dueFor(d, m), 0);
 
@@ -654,6 +669,8 @@ function buildFinance(raw, month, today, settings) {
     return {
       month: m,
       income: round2(income),
+      income_manual: round2(incomeManual),
+      income_withdraw: round2(incomeWithdraw),
       installment: round2(installment),
       expense_rutin: round2(rutin),
       expense_sekali: round2(sekali),
@@ -673,6 +690,7 @@ function buildFinance(raw, month, today, settings) {
     if (e.start_month) candidates.push(e.start_month);
   }
   for (const d of raw.debts) if (d.start_month) candidates.push(d.start_month);
+  for (const w of raw.withdrawals) candidates.push(w.month);
   candidates.sort();
 
   let carryStart = isValidMonth(settings.carry_start_month)
@@ -752,6 +770,8 @@ function buildFinance(raw, month, today, settings) {
     today,
     summary: {
       income_total: cur.income,
+      income_manual: cur.income_manual,
+      income_withdraw: cur.income_withdraw,
       installment_total: cur.installment,
       installment_paid: round2(
         raw.payments
@@ -782,6 +802,10 @@ function buildFinance(raw, month, today, settings) {
       expense_by_category,
       trading_pnl: round2(tradingRow ? tradingRow.pnl : 0),
       trading_days: tradingRow ? tradingRow.days : 0,
+      withdraw_usd: round2(
+        raw.withdrawals.filter((w) => w.month === month).reduce((a, w) => a + w.amount_usd, 0)
+      ),
+      withdraw_count: raw.withdrawals.filter((w) => w.month === month).length,
     },
     debt_overview: {
       total_amount: round2(activeDebts.reduce((a, d) => a + d.total_amount, 0)),
@@ -809,6 +833,7 @@ function buildFinance(raw, month, today, settings) {
     })),
     debts,
     expenses,
+    withdrawals: raw.withdrawals.filter((w) => w.month === month),
     trend,
   };
 }
@@ -1008,7 +1033,39 @@ async function handleExpensePost(request, env) {
   return json({ ok: true, id: res.meta?.last_row_id ?? null });
 }
 
-/** DELETE generik untuk incomes / debts / expenses */
+// ── Penarikan dari akun trading ──
+async function handleWithdrawalPost(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const date = String(b.date ?? "").slice(0, 10);
+  if (!isValidDate(date)) return fail("Tanggal penarikan harus YYYY-MM-DD");
+
+  const usd = Number(b.amount_usd);
+  if (!isFinite(usd) || usd <= 0) return fail("Nominal penarikan tidak valid");
+
+  const settings = await readSettings(env);
+  let rate = Number(b.rate);
+  if (!isFinite(rate) || rate <= 0) rate = Number(settings.usd_rate) || 1;
+
+  const amount = round2(usd * rate);
+  const note = b.note ? String(b.note).slice(0, 200) : null;
+
+  if (b.id) {
+    await env.DB.prepare(
+      `UPDATE withdrawals SET date=?, amount_usd=?, rate=?, amount=?, note=? WHERE id=?`
+    ).bind(date, round2(usd), round2(rate), amount, note, Number(b.id)).run();
+    return json({ ok: true, id: Number(b.id), amount });
+  }
+
+  const res = await env.DB.prepare(
+    `INSERT INTO withdrawals (date, amount_usd, rate, amount, note) VALUES (?,?,?,?,?)`
+  ).bind(date, round2(usd), round2(rate), amount, note).run();
+
+  return json({ ok: true, id: res.meta?.last_row_id ?? null, amount });
+}
+
+/** DELETE generik untuk incomes / debts / expenses / withdrawals */
 async function handleFinanceDelete(request, env, table) {
   const url = new URL(request.url);
   const id = Number(url.searchParams.get("id"));
@@ -1065,6 +1122,12 @@ export default {
         return fail("Method tidak didukung", 405);
       }
 
+      if (path === "/api/finance/withdrawal") {
+        if (method === "POST") return await handleWithdrawalPost(request, env);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "withdrawals");
+        return fail("Method tidak didukung", 405);
+      }
+
       if (path === "/api/finance/expense") {
         if (method === "POST") return await handleExpensePost(request, env);
         if (method === "DELETE") return await handleFinanceDelete(request, env, "expenses");
@@ -1081,9 +1144,9 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading Harian",
-          version: "3.1.0",
+          version: "3.2.0",
           // Penanda cepat untuk memastikan worker yang aktif sudah versi terbaru
-          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan"],
+          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan", "penarikan"],
           timestamp: new Date().toISOString(),
         });
       }
@@ -1095,4 +1158,3 @@ export default {
     }
   },
 };
-
