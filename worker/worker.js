@@ -1040,7 +1040,9 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading Harian",
-          version: "2.0.0",
+          version: "3.0.0",
+          // Penanda cepat untuk memastikan worker yang aktif sudah versi terbaru
+          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past"],
           timestamp: new Date().toISOString(),
         });
       }
@@ -1052,3 +1054,4 @@ export default {
     }
   },
 };
+
