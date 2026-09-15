@@ -444,6 +444,12 @@ function dueDateIn(month, day) {
 const daysBetween = (from, to) =>
   Math.round((toUTC(to).getTime() - toUTC(from).getTime()) / 86400000);
 
+const monthsBetween = (from, to) => {
+  const [ya, ma] = from.split("-").map(Number);
+  const [yb, mb] = to.split("-").map(Number);
+  return (yb - ya) * 12 + (mb - ma);
+};
+
 const expenseAppliesTo = (e, month) =>
   e.type === "rutin"
     ? (!e.start_month || e.start_month <= month) && (!e.end_month || e.end_month >= month)
@@ -583,6 +589,7 @@ function buildFinance(raw, month, today, settings) {
       start_month: d.start_month ?? null,
       note: d.note ?? null,
       status: lunas ? "lunas" : "aktif",
+      status_stored: d.status,
       paid_amount: paid,
       remaining,
       progress_pct: d.total_amount > 0 ? round2((paid / d.total_amount) * 100) : 0,
@@ -595,10 +602,41 @@ function buildFinance(raw, month, today, settings) {
       paid_auto_this_month: paidThisMonth && Number(payRow.auto) === 1,
       skipped_this_month: skippedThisMonth,
       auto_paid_count: raw.payments.filter((p) => p.debt_id === d.id && Number(p.auto) === 1).length,
-      due_this_month: activeThisMonth ? round2(Math.min(d.monthly_installment, remaining)) : 0,
+      due_this_month: 0,      // diisi setelah dueFor tersedia
       active_this_month: activeThisMonth,
     };
   });
+
+  // ── Akumulasi pembayaran nyata SEBELUM bulan tertentu ──
+  const paymentsByDebt = new Map();
+  for (const p of raw.payments) {
+    if (p.amount <= 0) continue;
+    if (!paymentsByDebt.has(p.debt_id)) paymentsByDebt.set(p.debt_id, []);
+    paymentsByDebt.get(p.debt_id).push(p);
+  }
+  const paidBefore = (debtId, m) =>
+    (paymentsByDebt.get(debtId) || []).reduce((a, p) => (p.month < m ? a + p.amount : a), 0);
+
+  const currentMonth = today.slice(0, 7);
+
+  /**
+   * Cicilan yang jatuh pada bulan `m` untuk satu hutang.
+   * Berhenti sendiri ketika tenor habis atau total hutang sudah tertutup,
+   * dan bulan-bulan lampau tetap memakai kondisi saat itu — bukan status hari ini.
+   */
+  function dueFor(d, m) {
+    if (d.monthly_installment <= 0 || d.total_amount <= 0) return 0;
+    if (d.start_month && d.start_month > m) return 0;
+    if (d.final_due_date && d.final_due_date.slice(0, 7) < m) return 0;
+    // Hutang yang ditandai lunas manual: berhenti sejak bulan berjalan
+    if (d.status_stored === "lunas" && m >= currentMonth) return 0;
+
+    const scheduled = d.start_month ? monthsBetween(d.start_month, m) * d.monthly_installment : 0;
+    const covered = Math.max(scheduled, paidBefore(d.id, m));
+    const left = round2(d.total_amount - covered);
+    if (left <= 0.009) return 0;
+    return round2(Math.min(d.monthly_installment, left));
+  }
 
   // ── Agregat satu bulan ──
   function agg(m) {
@@ -606,12 +644,7 @@ function buildFinance(raw, month, today, settings) {
       .filter((i) => i.month === m)
       .reduce((a, i) => a + i.amount, 0);
 
-    const installment = debts.reduce((a, d) => {
-      if (d.status === "lunas") return a;
-      if (d.start_month && d.start_month > m) return a;
-      if (d.final_due_date && d.final_due_date.slice(0, 7) < m) return a;
-      return a + d.monthly_installment;
-    }, 0);
+    const installment = debts.reduce((a, d) => a + dueFor(d, m), 0);
 
     const applicable = raw.expenses.filter((e) => expenseAppliesTo(e, m));
     const rutin = applicable.filter((e) => e.type === "rutin").reduce((a, e) => a + e.amount, 0);
@@ -670,6 +703,12 @@ function buildFinance(raw, month, today, settings) {
     if (carryOn && started) carry = a.net;
   }
 
+  // Lengkapi tagihan bulan yang sedang dilihat, kini berbasis jadwal
+  for (const d of debts) {
+    d.due_this_month = dueFor(d, month);
+    d.active_this_month = d.due_this_month > 0 || d.paid_this_month;
+  }
+
   const cur = chain[chain.length - 1];
   const incomes = raw.incomes.filter((i) => i.month === month);
   const expenses = raw.expenses
@@ -715,7 +754,9 @@ function buildFinance(raw, month, today, settings) {
       income_total: cur.income,
       installment_total: cur.installment,
       installment_paid: round2(
-        debts.filter((d) => d.paid_this_month).reduce((a, d) => a + d.monthly_installment, 0)
+        raw.payments
+          .filter((p) => p.month === month && p.amount > 0)
+          .reduce((a, p) => a + p.amount, 0)
       ),
       installment_unpaid: round2(
         debts
@@ -1040,9 +1081,9 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading Harian",
-          version: "3.0.0",
+          version: "3.1.0",
           // Penanda cepat untuk memastikan worker yang aktif sudah versi terbaru
-          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past"],
+          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan"],
           timestamp: new Date().toISOString(),
         });
       }
