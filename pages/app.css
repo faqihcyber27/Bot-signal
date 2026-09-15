@@ -879,3 +879,95 @@ select.input option { background: var(--bg-elevated); color: var(--text-primary)
   .month-label { min-width: 110px; font-size: 14px; }
 }
 
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  PENYESUAIAN LAYAR KECIL (≤ 560px)                        ║
+   ╚══════════════════════════════════════════════════════════╝ */
+@media (max-width: 560px) {
+  body { font-size: 15px; }
+
+  /* Nav lebih ramping — pill status cukup titiknya saja */
+  .nav { padding: 10px 12px; gap: 8px; }
+  .brand-mark { width: 34px; height: 34px; font-size: 12px; }
+  .brand-name { font-size: 15px; }
+  .page-tabs { margin-left: 0; padding: 3px; }
+  .page-tab { padding: 7px 10px; min-height: 34px; }
+  .status-pill { padding: 0; width: 34px; height: 34px; justify-content: center; border-radius: 50%; }
+  .status-pill span:not(.dot) { display: none; }
+  .icon-btn { width: 36px; height: 36px; min-width: 36px; }
+  .nav-right { gap: 7px; }
+
+  .main { padding: 18px 13px 48px; }
+  .page-head { gap: 14px; margin-bottom: 20px; }
+  .page-head h1 { font-size: 25px; }
+  .page-head p { font-size: 13.5px; }
+
+  /* Pemilih bulan selebar layar */
+  .month-picker { width: 100%; justify-content: space-between; }
+  .month-label { flex: 1; min-width: 0; font-size: 14px; }
+
+  /* Hero: angka mengecil supaya tidak terpotong */
+  .hero { padding: 18px 16px; border-radius: var(--r-lg); }
+  .hero-grid { gap: 14px; }
+  .hero-block { gap: 6px; }
+  .hero-block.primary { padding-bottom: 16px; }
+  .hero-label { font-size: 10.5px; letter-spacing: .06em; }
+  .hero-label svg { width: 12px; height: 12px; }
+  .hero-value { font-size: 23px; letter-spacing: -.03em; overflow-wrap: anywhere; }
+  .hero-block.primary .hero-value { font-size: 31px; }
+  .hero-cur { font-size: .5em; margin-right: 3px; }
+  .hero-meta { font-size: 11px; line-height: 1.45; align-items: flex-start; gap: 6px; }
+  .meta-badge { width: 18px; height: 18px; font-size: 10px; flex-shrink: 0; }
+
+  /* Stat dua kolom, lebih padat */
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 24px; }
+  .stat { padding: 14px 13px; border-radius: var(--r-sm); }
+  .stat-icon { width: 30px; height: 30px; margin-bottom: 10px; border-radius: 8px; }
+  .stat-icon svg { width: 15px; height: 15px; }
+  .stat-label { font-size: 10px; margin-bottom: 5px; letter-spacing: .04em; }
+  .stat-value { font-size: 18px; margin-bottom: 4px; overflow-wrap: anywhere; }
+  .stat-meta { font-size: 9.5px; line-height: 1.4; }
+
+  /* Panel & grafik */
+  .panel-head { padding: 15px 16px; gap: 10px; }
+  .panel-title { font-size: 14px; }
+  .chart-card { padding: 16px 14px; }
+  .chart-canvas { height: 240px !important; }
+  .donut-wrap { height: 230px; }
+  .chart-title h3 { font-size: 15px; }
+  .tabs { padding: 3px; }
+  .tab { padding: 7px 10px; font-size: 11.5px; min-height: 34px; }
+  .btn { padding: 9px 13px; font-size: 13px; }
+
+  /* Alokasi & daftar */
+  .alloc-legend { gap: 10px 14px; }
+  .alloc-k { font-size: 10px; }
+  .alloc-v { font-size: 12px; }
+  .list-row { padding: 11px 14px; gap: 9px; }
+  .list-title { font-size: 13px; }
+  .list-sub { font-size: 9.5px; }
+  .list-amount { font-size: 12.5px; }
+  .list-foot { padding: 12px 14px; font-size: 11px; }
+  .list-foot .total { font-size: 14px; }
+  .mini-btn { width: 32px; height: 32px; }
+
+  /* Kartu hutang */
+  .debt-card { padding: 15px; }
+  .debt-name { font-size: 14px; }
+  .debt-remaining { font-size: 17px; }
+  .debt-sub, .debt-of { font-size: 9.5px; }
+
+  /* Jurnal */
+  .cal-cell { min-height: 38px; }
+  .cal-day { font-size: 11px; }
+  .table thead th { padding: 11px 12px; }
+  .table tbody td { padding: 11px 12px; font-size: 12.5px; }
+  .month-row { grid-template-columns: 74px 1fr auto; gap: 10px; }
+  .month-pnl { font-size: 13px; }
+}
+
+@media (max-width: 380px) {
+  .stats { grid-template-columns: 1fr; }
+  .hero-grid { grid-template-columns: 1fr; }
+  .hero-value { font-size: 26px; }
+}
+
