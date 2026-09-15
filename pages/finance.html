@@ -232,10 +232,16 @@
       <section class="panel" aria-label="Pemasukan bulan ini">
         <div class="panel-head">
           <div class="panel-title"><span class="panel-title-dot" aria-hidden="true"></span> Pemasukan</div>
-          <button class="btn" id="addIncomeBtn" type="button">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            Tambah
-          </button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn" id="addWithdrawBtn" type="button" title="Catat penarikan dari akun trading">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg>
+              Penarikan
+            </button>
+            <button class="btn" id="addIncomeBtn" type="button">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              Tambah
+            </button>
+          </div>
         </div>
         <div id="incomeBody">
           <div class="empty">
@@ -311,6 +317,44 @@
     <div class="modal-foot">
       <button class="btn" data-close="incomeOverlay" type="button">Batal</button>
       <button class="btn btn-primary" id="incomeSave" type="button"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: PENARIKAN TRADING ═══ -->
+<div class="overlay" id="withdrawOverlay">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="wdTitle">
+    <div class="modal-head"><h3 id="wdTitle">Catat Penarikan</h3><p>Penarikan dari akun trading dihitung sebagai pemasukan pada bulan tanggal penarikan.</p></div>
+    <div class="modal-body two">
+      <div class="field">
+        <label for="wdDate">Tanggal</label>
+        <input class="input" type="date" id="wdDate">
+      </div>
+      <div class="field">
+        <label for="wdUsd">Nominal (USD)</label>
+        <div class="input-wrap"><span class="input-prefix">$</span>
+          <input class="input has-prefix" type="number" id="wdUsd" step="0.01" min="0" inputmode="decimal" placeholder="0.00"></div>
+      </div>
+      <div class="field">
+        <label for="wdRate">Kurs</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="wdRate" step="1" min="0" inputmode="decimal" placeholder="16000"></div>
+      </div>
+      <div class="field">
+        <label>Diterima</label>
+        <div class="preview" style="min-height:46px">
+          <div class="preview-item"><span class="preview-k">Hasil konversi</span>
+            <span class="preview-v text-green" id="wdResult">—</span></div>
+        </div>
+      </div>
+      <div class="field full">
+        <label for="wdNote">Catatan (opsional)</label>
+        <input class="input" type="text" id="wdNote" maxlength="200" placeholder="mis. tarik rutin 2 mingguan" style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-close="withdrawOverlay" type="button">Batal</button>
+      <button class="btn btn-primary" id="wdSave" type="button"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span></button>
     </div>
   </div>
 </div>
@@ -448,6 +492,12 @@
         <span class="field-hint">Hanya untuk bulan sebelum bulan berjalan, dan hanya sejak bulan mulai cicil.</span>
       </div>
       <div class="field">
+        <label for="setRate">Kurs USD Default</label>
+        <div class="input-wrap"><span class="input-prefix fin-sym">Rp</span>
+          <input class="input has-prefix" type="number" id="setRate" step="1" min="0" inputmode="decimal" placeholder="16000"></div>
+        <span class="field-hint">Dipakai saat mencatat penarikan; masih bisa diubah per penarikan.</span>
+      </div>
+      <div class="field">
         <label for="setCarryStart">Mulai Dihitung Dari</label>
         <input class="input" type="month" id="setCarryStart">
         <span class="field-hint">Kosongkan → otomatis dari bulan data paling awal.</span>
@@ -512,7 +562,7 @@
     data: null,
     settings: { finance_currency: 'IDR' },
     expenseTab: 'semua',
-    editing: { income: null, debt: null, expense: null },
+    editing: { income: null, debt: null, expense: null, withdraw: null },
     loaded: false
   };
 
@@ -575,6 +625,9 @@
   }
 
   const toneClass = (v) => (v > 0 ? 'text-green' : v < 0 ? 'text-red' : 'text-sec');
+  const isNarrow = () => window.innerWidth <= 560;
+  /** Versi ringkas untuk layar kecil supaya angka tidak terpotong */
+  const moneyFit = (v) => (isNarrow() ? curConf().sym + curConf().gap + compact(v) : money(v));
   const capital = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 
   function escapeHtml(s) {
@@ -705,12 +758,15 @@
       bm.innerHTML = '<span class="meta-badge">↑</span><span>' + parts.join(' · ') + '</span>';
     }
 
-    $('incomeValue').textContent = money(s.income_total);
+    $('incomeValue').textContent = moneyFit(s.income_total);
     const inc = state.data.incomes;
-    $('incomeMeta').innerHTML = '<span>' + (inc.length ? inc.length + ' sumber · ' +
-      escapeHtml(inc[0].label) : 'belum diinput') + '</span>';
+    const wd = state.data.withdrawals || [];
+    const incParts = [];
+    if (inc.length) incParts.push(inc.length + ' sumber');
+    if (wd.length) incParts.push(wd.length + ' penarikan ' + money(s.income_withdraw));
+    $('incomeMeta').innerHTML = '<span>' + (incParts.length ? incParts.join(' · ') : 'belum diinput') + '</span>';
 
-    $('outflowValue').textContent = money(s.outflow_total);
+    $('outflowValue').textContent = moneyFit(s.outflow_total);
     $('outflowValue').style.color = 'var(--text-primary)';
     $('outflowMeta').innerHTML = '<span>cicilan ' + compact(s.installment_total) +
       ' · rutin ' + compact(s.expense_rutin) + ' · lain ' + compact(s.expense_sekali) + '</span>';
@@ -763,9 +819,11 @@
     const t = $('sTrading');
     t.textContent = s.trading_days ? (s.trading_pnl >= 0 ? '+' : '') + '$' + Math.abs(s.trading_pnl).toFixed(2) : '—';
     t.className = 'stat-value ' + toneClass(s.trading_pnl);
-    $('sTradingMeta').textContent = s.trading_days
-      ? s.trading_days + ' hari trading · tidak dihitung ke buffer'
-      : 'belum ada entry jurnal bulan ini';
+    $('sTradingMeta').textContent = s.withdraw_count
+      ? 'ditarik $' + num(s.withdraw_usd, 2) + ' → ' + money(s.income_withdraw) + ' (masuk pemasukan)'
+      : s.trading_days
+        ? s.trading_days + ' hari trading · tarik dulu agar masuk buffer'
+        : 'belum ada entry jurnal bulan ini';
   }
 
   // ── ALOKASI ──
@@ -977,7 +1035,14 @@
 
   // ── PEMASUKAN ──
   function renderIncomes() {
-    const rows = state.data.incomes || [];
+    const manual = (state.data.incomes || []).map((r) => Object.assign({ kind: 'income' }, r));
+    const wds = (state.data.withdrawals || []).map((w) => ({
+      kind: 'withdraw', id: w.id, label: 'Penarikan trading',
+      amount: w.amount, category: 'trading',
+      note: '$' + num(w.amount_usd, 2) + ' @ ' + money(w.rate) + ' · ' + fmtDate(w.date) +
+        (w.note ? ' · ' + w.note : '')
+    }));
+    const rows = manual.concat(wds);
     if (!rows.length) {
       $('incomeBody').innerHTML =
         '<div class="empty"><div class="empty-icon">' +
@@ -990,15 +1055,15 @@
     const total = rows.reduce((a, r) => a + r.amount, 0);
     $('incomeBody').innerHTML = '<div class="list">' + rows.map((r) =>
       '<div class="list-row">' +
-      '<span class="list-dot" style="background:var(--green-bright)" aria-hidden="true"></span>' +
+      '<span class="list-dot" style="background:' + (r.kind === 'withdraw' ? 'var(--gold-bright)' : 'var(--green-bright)') + '" aria-hidden="true"></span>' +
       '<div class="list-main"><div class="list-title">' + escapeHtml(r.label) + '</div>' +
       '<div class="list-sub"><span class="cat ' + r.category + '">' + r.category + '</span>' +
         (r.note ? ' · ' + escapeHtml(r.note) : '') + '</div></div>' +
       '<span class="list-amount text-green">' + money(r.amount) + '</span>' +
       '<div class="list-actions">' +
-        '<button class="mini-btn" data-edit-income="' + r.id + '" aria-label="Edit pemasukan">' +
+        '<button class="mini-btn" data-edit-' + r.kind + '="' + r.id + '" aria-label="Edit pemasukan">' +
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
-        '<button class="mini-btn danger" data-del-income="' + r.id + '" aria-label="Hapus pemasukan">' +
+        '<button class="mini-btn danger" data-del-' + r.kind + '="' + r.id + '" aria-label="Hapus pemasukan">' +
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>' +
       '</div></div>'
     ).join('') + '</div>' +
@@ -1075,6 +1140,52 @@
       await post('/api/finance/income', payload);
       closeModal('incomeOverlay');
       toast('Pemasukan tersimpan · ' + money(payload.amount), 'success');
+      await load(true);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { btn.classList.remove('loading'); btn.disabled = false; }
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  FORM: PENARIKAN TRADING
+  // ════════════════════════════════════════════════════════
+  function updateWdPreview() {
+    const usd = parseFloat($('wdUsd').value);
+    const rate = parseFloat($('wdRate').value);
+    $('wdResult').textContent = (isFinite(usd) && isFinite(rate) && usd > 0 && rate > 0)
+      ? money(usd * rate) : '—';
+  }
+
+  function openWithdraw(id) {
+    const w = id ? (state.data.withdrawals || []).find((x) => x.id === id) : null;
+    state.editing.withdraw = w ? w.id : null;
+    $('wdTitle').textContent = w ? 'Edit Penarikan' : 'Catat Penarikan';
+    $('wdDate').value = w ? w.date : (state.data.summary.is_current_month ? state.today : state.month + '-01');
+    $('wdUsd').value = w ? w.amount_usd : '';
+    $('wdRate').value = w ? w.rate : (state.settings.usd_rate || 16000);
+    $('wdNote').value = w && w.note ? w.note : '';
+    updateWdPreview();
+    openModal('withdrawOverlay');
+    $('wdUsd').focus();
+  }
+
+  async function saveWithdraw() {
+    const btn = $('wdSave');
+    const payload = {
+      id: state.editing.withdraw || undefined,
+      date: $('wdDate').value,
+      amount_usd: parseFloat($('wdUsd').value),
+      rate: parseFloat($('wdRate').value) || undefined,
+      note: $('wdNote').value.trim() || null
+    };
+    if (!payload.date) { toast('Tanggal wajib diisi', 'error'); return; }
+    if (!isFinite(payload.amount_usd) || payload.amount_usd <= 0) { toast('Nominal penarikan belum valid', 'error'); $('wdUsd').focus(); return; }
+
+    btn.classList.add('loading'); btn.disabled = true;
+    try {
+      const r = await post('/api/finance/withdrawal', payload);
+      closeModal('withdrawOverlay');
+      toast('Penarikan tercatat · ' + money(r.amount), 'success');
+      if (payload.date.slice(0, 7) !== state.month) state.month = payload.date.slice(0, 7);
       await load(true);
     } catch (e) { toast(e.message, 'error'); }
     finally { btn.classList.remove('loading'); btn.disabled = false; }
@@ -1225,10 +1336,14 @@
     const map = {
       income: { path: '/api/finance/income', list: 'incomes', title: 'Hapus pemasukan' },
       debt: { path: '/api/finance/debt', list: 'debts', title: 'Hapus hutang' },
-      expense: { path: '/api/finance/expense', list: 'expenses', title: 'Hapus pengeluaran' }
+      expense: { path: '/api/finance/expense', list: 'expenses', title: 'Hapus pengeluaran' },
+      withdraw: { path: '/api/finance/withdrawal', list: 'withdrawals', title: 'Hapus penarikan' }
     }[kind];
 
-    const row = (state.data[map.list] || []).find((x) => x.id === id);
+    const found = (state.data[map.list] || []).find((x) => x.id === id);
+    const row = kind === 'withdraw' && found
+      ? { label: 'Penarikan $' + num(found.amount_usd, 2) + ' (' + fmtDate(found.date) + ')' }
+      : found;
     const extra = kind === 'debt' ? ' Seluruh riwayat pembayarannya ikut terhapus.' : '';
     const ok = await confirmDialog(map.title + '?',
       '“' + (row ? row.label : id) + '” akan dihapus permanen.' + extra, 'Hapus');
@@ -1255,6 +1370,10 @@
   });
 
   $('addIncomeBtn').addEventListener('click', () => openIncome(null));
+  $('addWithdrawBtn').addEventListener('click', () => openWithdraw(null));
+  $('wdSave').addEventListener('click', saveWithdraw);
+  $('wdUsd').addEventListener('input', updateWdPreview);
+  $('wdRate').addEventListener('input', updateWdPreview);
   $('addDebtBtn').addEventListener('click', () => openDebt(null));
   $('addExpenseBtn').addEventListener('click', () => openExpense(null));
 
@@ -1277,6 +1396,10 @@
   });
 
   $('incomeBody').addEventListener('click', (ev) => {
+    const editWd = ev.target.closest('[data-edit-withdraw]');
+    if (editWd) return openWithdraw(Number(editWd.dataset.editWithdraw));
+    const delWd = ev.target.closest('[data-del-withdraw]');
+    if (delWd) return removeItem('withdraw', Number(delWd.dataset.delWithdraw));
     const edit = ev.target.closest('[data-edit-income]');
     if (edit) return openIncome(Number(edit.dataset.editIncome));
     const del = ev.target.closest('[data-del-income]');
@@ -1318,6 +1441,7 @@
     $('setCur').value = state.settings.finance_currency || 'IDR';
     $('setCarry').value = String(Number(state.settings.carry_over) !== 0 ? 1 : 0);
     $('setAutoPay').value = String(Number(state.settings.auto_pay_past) !== 0 ? 1 : 0);
+    $('setRate').value = state.settings.usd_rate || '';
     $('setCarryStart').value = state.settings.carry_start_month || '';
     $('setCarryOpen').value = state.settings.carry_opening || '';
     openModal('settingsOverlay');
@@ -1331,6 +1455,7 @@
         finance_currency: $('setCur').value,
         carry_over: Number($('setCarry').value),
         auto_pay_past: Number($('setAutoPay').value),
+        usd_rate: parseFloat($('setRate').value) || 16000,
         carry_start_month: $('setCarryStart').value || '',
         carry_opening: parseFloat($('setCarryOpen').value) || 0
       });
@@ -1345,6 +1470,17 @@
     if (e.key !== 'Escape') return;
     if ($('confirmOverlay').classList.contains('show')) return closeConfirm(false);
     document.querySelectorAll('.overlay.show').forEach((ov) => ov.classList.remove('show'));
+  });
+
+  let resizeTimer = null;
+  let wasNarrow = isNarrow();
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!state.loaded || isNarrow() === wasNarrow) return;
+      wasNarrow = isNarrow();
+      renderHero();
+    }, 180);
   });
 
   document.addEventListener('visibilitychange', () => {
