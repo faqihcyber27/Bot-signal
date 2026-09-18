@@ -69,7 +69,7 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ─────────────────────────────────────────────────────────
 const SETTING_KEYS = [
   "initial_capital", "monthly_target", "currency", "finance_currency",
-  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past", "usd_rate",
+  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past", "usd_rate", "withdraw_as_income",
 ];
 const STRING_SETTINGS = ["currency", "finance_currency", "carry_start_month"];
 
@@ -82,6 +82,7 @@ async function readSettings(env) {
     carry_opening: 0,         // saldo pembuka pada carry_start_month
     auto_pay_past: 1,         // anggap cicilan bulan-bulan lalu sudah dibayar
     usd_rate: 16000,          // kurs default USD → mata uang keuangan
+    withdraw_as_income: 1,    // penarikan trading ikut dihitung sebagai pemasukan
   };
   for (const row of res.results ?? []) {
     if (STRING_SETTINGS.includes(row.key)) out[row.key] = row.value;
@@ -232,7 +233,7 @@ async function handleEntryDelete(request, env) {
 // ─────────────────────────────────────────────────────────
 //  STATISTIK
 // ─────────────────────────────────────────────────────────
-function computeStats(entries, settings, today) {
+function computeStats(entries, settings, today, withdrawals) {
   const base = {
     has_data: false,
     initial_capital: settings.initial_capital || 0,
@@ -269,9 +270,26 @@ function computeStats(entries, settings, today) {
     month_target_pct: 0,
     first_date: null,
     last_date: null,
+    withdrawn_total_usd: 0,
+    withdrawn_month_usd: 0,
+    withdrawn_after_last_entry: 0,
+    balance_after_withdrawal: settings.initial_capital || 0,
+    equity_effective: settings.initial_capital || 0,
+    withdrawal_count: 0,
   };
 
-  if (!entries.length) return base;
+  const wds = withdrawals || [];
+  const wdTotal = round2(wds.reduce((a, w) => a + w.amount_usd, 0));
+  const wdMonth = round2(
+    wds.filter((w) => w.date.slice(0, 7) === today.slice(0, 7)).reduce((a, w) => a + w.amount_usd, 0)
+  );
+
+  if (!entries.length) {
+    base.withdrawn_total_usd = wdTotal;
+    base.withdrawn_month_usd = wdMonth;
+    base.withdrawal_count = wds.length;
+    return base;
+  }
 
   const n = entries.length;
   const first = entries[0];
@@ -287,7 +305,7 @@ function computeStats(entries, settings, today) {
   let loss = 0;
   let flat = 0;
   let netAdjustment = 0;
-  let peak = entries[0].start_balance;
+  let peak = entries[0].start_balance;   // dibandingkan terhadap ekuitas efektif
   let maxDdPct = 0;
   let maxDdAmount = 0;
   let best = entries[0];
@@ -323,8 +341,9 @@ function computeStats(entries, settings, today) {
     if (pnl > best.pnl) best = e;
     if (pnl < worst.pnl) worst = e;
 
-    peak = Math.max(peak, e.end_balance);
-    const ddAmount = peak - e.end_balance;
+    const equity = e.equity_adj !== undefined ? e.equity_adj : e.end_balance;
+    peak = Math.max(peak, equity);
+    const ddAmount = peak - equity;
     if (ddAmount > maxDdAmount) maxDdAmount = ddAmount;
     const ddPct = peak > 0 ? (ddAmount / peak) * 100 : 0;
     if (ddPct > maxDdPct) maxDdPct = ddPct;
@@ -395,6 +414,22 @@ function computeStats(entries, settings, today) {
         : 0,
     first_date: first.date,
     last_date: last.date,
+    withdrawn_total_usd: wdTotal,
+    withdrawn_month_usd: wdMonth,
+    // Ekuitas efektif: saldo tercatat + seluruh dana yang sudah ditarik.
+    // Penarikan hanya mengurangi saldo, bukan hasil kerja — jadi progres target
+    // dan drawdown tetap dihitung dari angka ini.
+    equity_effective: round2(
+      last.end_balance + wds.filter((w) => w.date <= last.date).reduce((a, w) => a + w.amount_usd, 0)
+    ),
+    // Penarikan setelah entry terakhir belum tercermin di saldo yang tercatat
+    withdrawn_after_last_entry: round2(
+      wds.filter((w) => w.date > last.date).reduce((a, w) => a + w.amount_usd, 0)
+    ),
+    balance_after_withdrawal: round2(
+      last.end_balance - wds.filter((w) => w.date > last.date).reduce((a, w) => a + w.amount_usd, 0)
+    ),
+    withdrawal_count: wds.length,
   };
 }
 
@@ -403,8 +438,37 @@ async function handleSummary(request, env) {
   let today = url.searchParams.get("today") ?? "";
   if (!isValidDate(today)) today = new Date().toISOString().slice(0, 10);
 
-  const [settings, entries] = await Promise.all([readSettings(env), allEntries(env)]);
-  const stats = computeStats(entries, settings, today);
+  const [settings, entries, wdRes] = await Promise.all([
+    readSettings(env),
+    allEntries(env),
+    env.DB.prepare(
+      "SELECT id, date, amount_usd, rate, amount, note FROM withdrawals ORDER BY date DESC, id DESC"
+    ).all(),
+  ]);
+
+  const withdrawals = (wdRes.results ?? []).map((w) => ({
+    id: w.id,
+    date: w.date,
+    amount_usd: round2(w.amount_usd),
+    rate: round2(w.rate),
+    amount: round2(w.amount),
+    note: w.note ?? null,
+  }));
+
+  // Tambahkan ekuitas efektif tiap hari: saldo hari itu + penarikan s.d. tanggal tsb
+  const sortedW = withdrawals.slice().sort((a, b) => a.date.localeCompare(b.date));
+  let wIdx = 0;
+  let wCum = 0;
+  for (const e of entries) {
+    while (wIdx < sortedW.length && sortedW[wIdx].date <= e.date) {
+      wCum = round2(wCum + sortedW[wIdx].amount_usd);
+      wIdx++;
+    }
+    e.withdrawn_to_date = wCum;
+    e.equity_adj = round2(e.end_balance + wCum);
+  }
+
+  const stats = computeStats(entries, settings, today, withdrawals);
 
   return json({
     ok: true,
@@ -412,6 +476,7 @@ async function handleSummary(request, env) {
     settings,
     stats,
     entries,
+    withdrawals,
     server_time: new Date().toISOString(),
   });
 }
@@ -654,9 +719,9 @@ function buildFinance(raw, month, today, settings) {
     const incomeManual = raw.incomes
       .filter((i) => i.month === m)
       .reduce((a, i) => a + i.amount, 0);
-    const incomeWithdraw = raw.withdrawals
-      .filter((w) => w.month === m)
-      .reduce((a, w) => a + w.amount, 0);
+    const incomeWithdraw = Number(settings.withdraw_as_income) === 0
+      ? 0
+      : raw.withdrawals.filter((w) => w.month === m).reduce((a, w) => a + w.amount, 0);
     const income = incomeManual + incomeWithdraw;
 
     const installment = debts.reduce((a, d) => a + dueFor(d, m), 0);
@@ -1144,9 +1209,9 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading Harian",
-          version: "3.2.0",
+          version: "3.4.0",
           // Penanda cepat untuk memastikan worker yang aktif sudah versi terbaru
-          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan", "penarikan"],
+          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif"],
           timestamp: new Date().toISOString(),
         });
       }
@@ -1158,3 +1223,4 @@ export default {
     }
   },
 };
+
