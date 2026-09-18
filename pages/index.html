@@ -246,6 +246,13 @@
         <div class="stat-meta" id="sDdMeta">puncak —</div>
       </div>
 
+      <div class="stat gold reveal">
+        <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg></div>
+        <div class="stat-label">Total Ditarik</div>
+        <div class="stat-value" id="sWithdraw">—</div>
+        <div class="stat-meta" id="sWithdrawMeta">belum ada penarikan</div>
+      </div>
+
       <div class="stat blue reveal">
         <div class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
         <div class="stat-label">Bulan Ini</div>
@@ -320,6 +327,29 @@
       </section>
     </div>
 
+    <!-- ═══ PENARIKAN ═══ -->
+    <section class="panel" style="margin-bottom:24px" aria-label="Penarikan dana">
+      <div class="panel-head">
+        <div class="panel-title"><span class="panel-title-dot" aria-hidden="true"></span> Penarikan Dana</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="panel-meta" id="wdMeta">—</span>
+          <button class="btn" id="addWdBtn" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Tarik Dana
+          </button>
+        </div>
+      </div>
+      <div id="wdBody">
+        <div class="empty">
+          <div class="empty-icon">
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg>
+          </div>
+          <div class="empty-title">Belum ada penarikan</div>
+          <div class="empty-sub">catat saat menarik dana dari akun trading</div>
+        </div>
+      </div>
+    </section>
+
     <!-- ═══ RIWAYAT ═══ -->
     <section class="panel" aria-label="Riwayat entry">
       <div class="panel-head">
@@ -356,6 +386,62 @@
     <div class="modal-foot">
       <button class="btn" id="confirmCancel" type="button">Batal</button>
       <button class="btn btn-danger" id="confirmOk" type="button">Hapus</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL PENARIKAN ═══ -->
+<div class="overlay" id="wdOverlay">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="wdTitle">
+    <div class="modal-head">
+      <h3 id="wdTitle">Tarik Dana</h3>
+      <p>Penarikan tidak dihitung sebagai loss. Saldo akan berkurang sebesar nominal ini.</p>
+    </div>
+    <div class="modal-body two">
+      <div class="field">
+        <label for="wdDate">Tanggal</label>
+        <input class="input" type="date" id="wdDate">
+      </div>
+      <div class="field">
+        <label for="wdUsd">Nominal Penarikan</label>
+        <div class="input-wrap"><span class="input-prefix">$</span>
+          <input class="input has-prefix" type="number" id="wdUsd" step="0.01" min="0" inputmode="decimal" placeholder="0.00"></div>
+      </div>
+      <div class="field full">
+        <div class="preview" id="wdPreview">
+          <div class="preview-item">
+            <span class="preview-k">Saldo sekarang</span>
+            <span class="preview-v" id="wdBefore">—</span>
+          </div>
+          <div class="preview-sep" aria-hidden="true"></div>
+          <div class="preview-item">
+            <span class="preview-k">Sisa setelah tarik</span>
+            <span class="preview-v" id="wdAfter">—</span>
+          </div>
+          <div class="preview-sep" aria-hidden="true"></div>
+          <div class="preview-item">
+            <span class="preview-k">Diterima (rupiah)</span>
+            <span class="preview-v" id="wdIdr">—</span>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="wdRate">Kurs</label>
+        <div class="input-wrap"><span class="input-prefix">Rp</span>
+          <input class="input has-prefix" type="number" id="wdRate" step="1" min="0" inputmode="decimal" placeholder="16000"></div>
+        <span class="field-hint">Untuk halaman keuangan.</span>
+      </div>
+      <div class="field">
+        <label for="wdNote">Catatan (opsional)</label>
+        <input class="input" type="text" id="wdNote" maxlength="200" placeholder="mis. tarik 2 mingguan"
+               style="font-family:'Manrope',sans-serif;font-size:14px">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="wdCancel" type="button">Batal</button>
+      <button class="btn btn-primary" id="wdSave" type="button">
+        <span class="spinner" aria-hidden="true"></span><span class="btn-label">Simpan</span>
+      </button>
     </div>
   </div>
 </div>
@@ -425,6 +511,8 @@
     chartMode: 'equity',
     calMonth: todayStr().slice(0, 7),
     editing: null,
+    editingWd: null,
+    withdrawals: [],
     loaded: false,
     lastNumbers: {}
   };
@@ -585,6 +673,7 @@
       state.stats = data.stats || {};
       state.settings = data.settings || state.settings;
       state.byDate = new Map(state.entries.map((e) => [e.date, e]));
+      state.withdrawals = data.withdrawals || [];
       state.loaded = true;
 
       applyCurrency();
@@ -594,6 +683,7 @@
       renderCalendar();
       renderMonths();
       renderHistory();
+      renderWithdrawals();
       if (!state.editing) syncFormToDate($('fDate').value || state.today, true);
       setStatus('ok');
     } catch (e) {
@@ -634,6 +724,23 @@
     if (!st.has_data) {
       balMeta.innerHTML = '<span>belum ada data</span>';
     } else {
+      const pending = st.withdrawn_after_last_entry || 0;
+      if (pending > 0) {
+        balMeta.classList.add('down');
+        balMeta.innerHTML = '<span class="meta-badge">↓</span><span>baru ditarik $' + num(pending) +
+          ' · sisa $' + num(st.balance_after_withdrawal) + '</span>';
+        renderHeroRest(st);
+        return;
+      }
+
+      if ((st.withdrawn_total_usd || 0) > 0) {
+        balMeta.classList.add('up');
+        balMeta.innerHTML = '<span class="meta-badge">★</span><span>ekuitas efektif $' +
+          num(st.equity_effective) + ' · sudah ditarik $' + num(st.withdrawn_total_usd) + '</span>';
+        renderHeroRest(st);
+        return;
+      }
+
       const fromPeak = (st.current_balance || 0) - (st.peak_balance || 0);
       if (fromPeak >= -0.004) {
         balMeta.classList.add('up');
@@ -645,6 +752,10 @@
       }
     }
 
+    renderHeroRest(st);
+  }
+
+  function renderHeroRest(st) {
     const tv = $('todayValue');
     const tm = $('todayMeta');
     tm.className = 'hero-meta';
@@ -717,8 +828,20 @@
       $('sWorstMeta').textContent = fmtDateLong(st.worst_day.date) + ' · ' + pct(st.worst_day.pnl_pct);
     }
 
+    const wdEl = $('sWithdraw');
+    if (st.withdrawal_count) {
+      wdEl.textContent = '$' + num(st.withdrawn_total_usd);
+      wdEl.className = 'stat-value text-gold';
+      $('sWithdrawMeta').textContent = st.withdrawal_count + '× · bulan ini $' + num(st.withdrawn_month_usd);
+    } else {
+      wdEl.textContent = '—';
+      wdEl.className = 'stat-value';
+      $('sWithdrawMeta').textContent = 'belum ada penarikan';
+    }
+
     $('sDd').textContent = num(st.max_drawdown_pct);
-    $('sDdMeta').textContent = 'setara ' + money(-st.max_drawdown_amount) + ' · puncak ' + money(st.peak_balance);
+    $('sDdMeta').textContent = 'setara ' + money(-st.max_drawdown_amount) + ' · puncak ' +
+      money(st.peak_balance) + (st.withdrawal_count ? ' (ekuitas efektif)' : '');
 
     const m = $('sMonth');
     m.textContent = money(st.month_pnl, true);
@@ -752,11 +875,15 @@
     const labels = data.map((e) => fmtDateShort(e.date));
     const isEquity = state.chartMode === 'equity';
 
-    $('chartTitle').textContent = isEquity ? 'Kurva Ekuitas' : 'Profit / Loss Harian';
+    const useAdj = (state.stats.withdrawal_count || 0) > 0;
+    $('chartTitle').textContent = isEquity
+      ? (useAdj ? 'Kurva Ekuitas Efektif' : 'Kurva Ekuitas')
+      : 'Profit / Loss Harian';
+    const equityOf = (e) => (useAdj && e.equity_adj !== undefined ? e.equity_adj : e.end_balance);
     if (isEquity) {
-      const vals = data.map((e) => e.end_balance);
+      const vals = data.map(equityOf);
       $('chartRange').textContent = money(Math.min.apply(null, vals)) + ' ↔ ' + money(Math.max.apply(null, vals)) +
-        ' · ' + data.length + ' hari';
+        ' · ' + data.length + ' hari' + (useAdj ? ' · penarikan tidak menurunkan kurva' : '');
     } else {
       const total = data.reduce((a, e) => a + e.pnl, 0);
       $('chartRange').textContent = 'total ' + money(total, true) + ' · ' + data.length + ' hari';
@@ -790,12 +917,16 @@
             label: (c) => {
               const e = data[c.dataIndex];
               return isEquity
-                ? money(e.end_balance) + '  (' + (e.pnl >= 0 ? '+' : '') + num(e.pnl) + ')'
+                ? money(equityOf(e)) + '  (' + (e.pnl >= 0 ? '+' : '') + num(e.pnl) + ')'
                 : money(e.pnl, true) + '  (' + pct(e.pnl_pct, true) + ')';
             },
             afterLabel: (c) => {
               const e = data[c.dataIndex];
-              return e.note ? '“' + e.note + '”' : '';
+              const lines = [];
+              if (useAdj && e.withdrawn_to_date > 0) lines.push('saldo $' + num(e.end_balance) +
+                ' · ditarik $' + num(e.withdrawn_to_date));
+              if (e.note) lines.push('“' + e.note + '”');
+              return lines;
             }
           }
         }
@@ -831,7 +962,7 @@
         data: {
           labels: labels,
           datasets: [{
-            data: data.map((e) => e.end_balance),
+            data: data.map(equityOf),
             borderColor: '#e3b341',
             backgroundColor: gradient,
             borderWidth: 2.5,
@@ -1001,6 +1132,126 @@
       '</tr></thead><tbody>' + body + '</tbody></table></div>';
   }
 
+  // ── PENARIKAN ──
+  function renderWithdrawals() {
+    const rows = state.withdrawals;
+    const total = rows.reduce((a, w) => a + w.amount_usd, 0);
+    $('wdMeta').textContent = rows.length ? rows.length + '× · $' + num(total) : '—';
+
+    if (!rows.length) return;
+
+    $('wdBody').innerHTML = '<div class="list">' + rows.slice(0, 24).map((w) =>
+      '<div class="list-row">' +
+      '<span class="list-dot" style="background:var(--gold-bright)" aria-hidden="true"></span>' +
+      '<div class="list-main"><div class="list-title">' + fmtDateLong(w.date) + '</div>' +
+      '<div class="list-sub">≈ Rp ' + Math.round(w.amount).toLocaleString('id-ID') +
+        ' @ ' + Math.round(w.rate).toLocaleString('id-ID') +
+        (w.note ? ' · ' + escapeHtml(w.note) : '') + '</div></div>' +
+      '<span class="list-amount text-gold">−$' + num(w.amount_usd) + '</span>' +
+      '<div class="list-actions">' +
+        '<button class="mini-btn" data-edit-wd="' + w.id + '" aria-label="Edit penarikan">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
+        '<button class="mini-btn danger" data-del-wd="' + w.id + '" aria-label="Hapus penarikan">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>' +
+      '</div></div>'
+    ).join('') + '</div>' +
+      '<div class="list-foot"><span>Total ditarik</span><span class="total text-gold">$' + num(total) + '</span></div>';
+  }
+
+  /** Penarikan yang terjadi setelah tanggal `from` sampai `to` (inklusif) */
+  function withdrawnBetween(from, to) {
+    return state.withdrawals.reduce((a, w) => (w.date > from && w.date <= to ? a + w.amount_usd : a), 0);
+  }
+
+  function baseBalance() {
+    const st = state.stats;
+    return st.has_data ? (st.balance_after_withdrawal ?? st.current_balance) : 0;
+  }
+
+  function updateWdPreview() {
+    const usd = parseFloat($('wdUsd').value);
+    const rate = parseFloat($('wdRate').value);
+    const before = baseBalance() + (state.editingWd
+      ? (state.withdrawals.find((w) => w.id === state.editingWd)?.amount_usd || 0) : 0);
+
+    $('wdBefore').textContent = '$' + num(before);
+    if (isFinite(usd) && usd > 0) {
+      const after = before - usd;
+      $('wdAfter').textContent = '$' + num(after);
+      $('wdAfter').className = 'preview-v ' + (after < 0 ? 'text-red' : 'text-gold');
+      $('wdPreview').className = 'preview ' + (after < 0 ? 'down' : 'up');
+      $('wdIdr').textContent = isFinite(rate) && rate > 0
+        ? 'Rp ' + Math.round(usd * rate).toLocaleString('id-ID') : '—';
+    } else {
+      $('wdAfter').textContent = '—';
+      $('wdAfter').className = 'preview-v';
+      $('wdPreview').className = 'preview';
+      $('wdIdr').textContent = '—';
+    }
+  }
+
+  function openWd(id) {
+    const w = id ? state.withdrawals.find((x) => x.id === id) : null;
+    state.editingWd = w ? w.id : null;
+    $('wdTitle').textContent = w ? 'Edit Penarikan' : 'Tarik Dana';
+    $('wdDate').value = w ? w.date : state.today;
+    $('wdUsd').value = w ? w.amount_usd : '';
+    $('wdRate').value = w ? w.rate : (state.settings.usd_rate || 16000);
+    $('wdNote').value = w && w.note ? w.note : '';
+    updateWdPreview();
+    $('wdOverlay').classList.add('show');
+    $('wdUsd').focus();
+  }
+
+  async function saveWd() {
+    const btn = $('wdSave');
+    const usd = parseFloat($('wdUsd').value);
+    const date = $('wdDate').value;
+    if (!date) { toast('Tanggal wajib diisi', 'error'); return; }
+    if (!isFinite(usd) || usd <= 0) { toast('Nominal penarikan belum valid', 'error'); $('wdUsd').focus(); return; }
+
+    btn.classList.add('loading');
+    btn.disabled = true;
+    try {
+      await api('/api/finance/withdrawal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: state.editingWd || undefined,
+          date: date,
+          amount_usd: usd,
+          rate: parseFloat($('wdRate').value) || undefined,
+          note: $('wdNote').value.trim() || null
+        })
+      });
+      $('wdOverlay').classList.remove('show');
+      state.editingWd = null;
+      toast('Penarikan $' + num(usd) + ' tercatat', 'success');
+      await loadAll(true);
+      syncFormToDate($('fDate').value || state.today, true);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteWd(id) {
+    const w = state.withdrawals.find((x) => x.id === id);
+    const ok = await confirmDialog('Hapus penarikan?',
+      'Penarikan $' + num(w ? w.amount_usd : 0) + ' pada ' + (w ? fmtDateLong(w.date) : '') +
+      ' akan dihapus permanen.', 'Hapus');
+    if (!ok) return;
+    try {
+      await api('/api/finance/withdrawal?id=' + id, { method: 'DELETE' });
+      toast('Penarikan dihapus', 'success');
+      await loadAll(true);
+    } catch (e) {
+      toast('Gagal menghapus: ' + e.message, 'error');
+    }
+  }
+
   // ════════════════════════════════════════════════════════
   //  FORM
   // ════════════════════════════════════════════════════════
@@ -1034,9 +1285,12 @@
       setEditing(null);
       const prev = prevEntryBefore(date);
       if (prev) {
-        $('fStart').value = prev.end_balance;
-        $('hStart').textContent = 'otomatis dari ' + fmtDateShort(prev.date);
-        $('hStart').className = 'field-hint';
+        const taken = withdrawnBetween(prev.date, date);
+        $('fStart').value = Math.round((prev.end_balance - taken) * 100) / 100;
+        $('hStart').textContent = taken > 0
+          ? 'dari ' + fmtDateShort(prev.date) + ' − penarikan $' + num(taken)
+          : 'otomatis dari ' + fmtDateShort(prev.date);
+        $('hStart').className = 'field-hint' + (taken > 0 ? ' warn' : '');
       } else if (state.settings.initial_capital > 0) {
         $('fStart').value = state.settings.initial_capital;
         $('hStart').textContent = 'dari modal awal';
@@ -1088,13 +1342,15 @@
     if (date && isFinite(start)) {
       const prev = prevEntryBefore(date);
       if (prev) {
-        const diff = start - prev.end_balance;
+        const taken = withdrawnBetween(prev.date, date);
+        const diff = start - (prev.end_balance - taken);
         if (Math.abs(diff) >= 0.01) {
-          hint.textContent = (diff > 0 ? 'deposit ' : 'withdraw ') + money(Math.abs(diff)) +
-            ' vs ' + fmtDateShort(prev.date);
+          hint.textContent = (diff > 0 ? 'deposit ' : 'selisih ') + money(Math.abs(diff)) +
+            ' vs ' + fmtDateShort(prev.date) + (taken > 0 ? ' (penarikan sudah dihitung)' : '');
           hint.className = 'field-hint warn';
         } else {
-          hint.textContent = 'nyambung dari ' + fmtDateShort(prev.date);
+          hint.textContent = 'nyambung dari ' + fmtDateShort(prev.date) +
+            (taken > 0 ? ' − penarikan $' + num(taken) : '');
           hint.className = 'field-hint ok';
         }
       }
@@ -1204,6 +1460,22 @@
     syncFormToDate(state.today, false);
   });
 
+  $('addWdBtn').addEventListener('click', () => openWd(null));
+  $('wdSave').addEventListener('click', saveWd);
+  $('wdCancel').addEventListener('click', () => { $('wdOverlay').classList.remove('show'); state.editingWd = null; });
+  $('wdUsd').addEventListener('input', updateWdPreview);
+  $('wdRate').addEventListener('input', updateWdPreview);
+  $('wdOverlay').addEventListener('click', (e) => {
+    if (e.target === $('wdOverlay')) { $('wdOverlay').classList.remove('show'); state.editingWd = null; }
+  });
+
+  $('wdBody').addEventListener('click', (e) => {
+    const edit = e.target.closest('[data-edit-wd]');
+    if (edit) return openWd(Number(edit.dataset.editWd));
+    const del = e.target.closest('[data-del-wd]');
+    if (del) return deleteWd(Number(del.dataset.delWd));
+  });
+
   $('refreshBtn').addEventListener('click', function () {
     this.style.transform = 'rotate(360deg)';
     setTimeout(() => { this.style.transform = ''; }, 500);
@@ -1299,6 +1571,7 @@
     if (e.key === 'Escape') {
       if ($('confirmOverlay').classList.contains('show')) closeConfirm(false);
       if ($('settingsOverlay').classList.contains('show')) $('settingsOverlay').classList.remove('show');
+      if ($('wdOverlay').classList.contains('show')) { $('wdOverlay').classList.remove('show'); state.editingWd = null; }
     }
   });
 
