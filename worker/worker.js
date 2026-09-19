@@ -21,7 +21,9 @@
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  // Authorization WAJIB disebut: tanpa ini browser memblokir preflight
+  // untuk setiap permintaan yang membawa token sesi.
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -1360,7 +1362,7 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading & Keuangan",
-          version: "4.0.1",
+          version: "4.0.2",
           features: ["jurnal", "keuangan", "carry_over", "auto_pay_past",
                      "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif",
                      "jurnal_idr", "multi_user"],
