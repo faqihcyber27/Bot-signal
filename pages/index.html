@@ -404,7 +404,7 @@
       </div>
       <div class="field">
         <label for="wdUsd">Nominal Penarikan</label>
-        <div class="input-wrap"><span class="input-prefix">$</span>
+        <div class="input-wrap"><span class="input-prefix cur-sym">Rp</span>
           <input class="input has-prefix" type="number" id="wdUsd" step="0.01" min="0" inputmode="decimal" placeholder="0.00"></div>
       </div>
       <div class="field full">
@@ -419,17 +419,17 @@
             <span class="preview-v" id="wdAfter">—</span>
           </div>
           <div class="preview-sep" aria-hidden="true"></div>
-          <div class="preview-item">
-            <span class="preview-k">Diterima (rupiah)</span>
+          <div class="preview-item" id="wdIdrWrap">
+            <span class="preview-k">Diterima</span>
             <span class="preview-v" id="wdIdr">—</span>
           </div>
         </div>
       </div>
-      <div class="field">
-        <label for="wdRate">Kurs</label>
-        <div class="input-wrap"><span class="input-prefix">Rp</span>
-          <input class="input has-prefix" type="number" id="wdRate" step="1" min="0" inputmode="decimal" placeholder="16000"></div>
-        <span class="field-hint">Untuk halaman keuangan.</span>
+      <div class="field" id="wdRateWrap">
+        <label for="wdRate">Kurs ke Mata Uang Keuangan</label>
+        <div class="input-wrap"><span class="input-prefix">×</span>
+          <input class="input has-prefix" type="number" id="wdRate" step="1" min="0" inputmode="decimal" placeholder="1"></div>
+        <span class="field-hint">Hanya dipakai bila mata uang jurnal berbeda dari halaman keuangan.</span>
       </div>
       <div class="field">
         <label for="wdNote">Catatan (opsional)</label>
@@ -455,9 +455,16 @@
     </div>
     <div class="modal-body">
       <div class="field">
+        <label for="sCurrency">Mata Uang Jurnal</label>
+        <select class="input" id="sCurrency">
+          <option value="IDR">IDR — Rupiah</option>
+          <option value="USD">USD — Dolar</option>
+        </select>
+      </div>
+      <div class="field">
         <label for="sInitial">Modal Awal</label>
         <div class="input-wrap">
-          <span class="input-prefix">$</span>
+          <span class="input-prefix cur-sym">Rp</span>
           <input class="input has-prefix" type="number" id="sInitial" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
         </div>
         <span class="field-hint">Kosongkan/0 → dipakai saldo awal entry pertama.</span>
@@ -465,7 +472,7 @@
       <div class="field">
         <label for="sTarget">Target Profit Bulanan</label>
         <div class="input-wrap">
-          <span class="input-prefix">$</span>
+          <span class="input-prefix cur-sym">Rp</span>
           <input class="input has-prefix" type="number" id="sTarget" step="0.01" min="0" inputmode="decimal" placeholder="0.00">
         </div>
         <span class="field-hint">0 = target tidak ditampilkan.</span>
@@ -498,7 +505,11 @@
   const DOW_SHORT = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
   const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
   const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
-  const CUR_SYMBOL = { USD: '$', IDR: 'Rp', EUR: '€' };
+  const CUR = {
+    IDR: { sym: 'Rp', dec: 0, locale: 'id-ID', gap: ' ', step: 1000 },
+    USD: { sym: '$', dec: 2, locale: 'en-US', gap: '', step: 0.01 },
+    EUR: { sym: '€', dec: 2, locale: 'de-DE', gap: ' ', step: 0.01 }
+  };
   const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const state = {
@@ -558,19 +569,37 @@
     return String(d.getDate()).padStart(2, '0') + ' ' + MONTHS_SHORT[d.getMonth()];
   }
 
-  function sym() { return CUR_SYMBOL[state.settings.currency] || '$'; }
+  const curConf = () => CUR[state.settings.currency] || CUR.IDR;
+  function sym() { return curConf().sym; }
+
+  /** Versi ringkas untuk sumbu grafik: 15,0jt / 250rb */
+  function compact(v) {
+    const c = curConf();
+    const n = Math.abs(Number(v) || 0);
+    const sign = v < 0 ? '-' : '';
+    if (c.sym === 'Rp') {
+      if (n >= 1e9) return sign + (n / 1e9).toFixed(1) + 'M';
+      if (n >= 1e6) return sign + (n / 1e6).toFixed(1) + 'jt';
+      if (n >= 1e3) return sign + Math.round(n / 1e3) + 'rb';
+      return sign + Math.round(n);
+    }
+    if (n >= 1e6) return sign + (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return sign + (n / 1e3).toFixed(1) + 'k';
+    return sign + Math.round(n);
+  }
 
   function num(n, decimals) {
-    const d = decimals === undefined ? 2 : decimals;
+    const c = curConf();
+    const d = decimals === undefined ? c.dec : decimals;
     const v = Number(n);
     if (!isFinite(v)) return '—';
-    return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+    return v.toLocaleString(c.locale, { minimumFractionDigits: d, maximumFractionDigits: d });
   }
 
   function money(n, signed) {
     const v = Number(n) || 0;
     const s = signed && v > 0 ? '+' : v < 0 ? '-' : '';
-    return s + sym() + num(Math.abs(v));
+    return s + curConf().sym + curConf().gap + num(Math.abs(v));
   }
 
   function pct(n, signed) {
@@ -677,6 +706,8 @@
       state.loaded = true;
 
       applyCurrency();
+    const stp = curConf().step;
+    ['fStart', 'fEnd', 'wdUsd'].forEach((id) => { const el = $(id); if (el) el.step = stp; });
       renderHero();
       renderStats();
       renderChart();
@@ -711,6 +742,7 @@
     $('curSym').textContent = s;
     $('pStart').textContent = s;
     $('pEnd').textContent = s;
+    document.querySelectorAll('.cur-sym').forEach((el) => { el.textContent = s; });
   }
 
   // ── HERO ──
@@ -727,16 +759,16 @@
       const pending = st.withdrawn_after_last_entry || 0;
       if (pending > 0) {
         balMeta.classList.add('down');
-        balMeta.innerHTML = '<span class="meta-badge">↓</span><span>baru ditarik $' + num(pending) +
-          ' · sisa $' + num(st.balance_after_withdrawal) + '</span>';
+        balMeta.innerHTML = '<span class="meta-badge">↓</span><span>baru ditarik ' + money(pending) +
+          ' · sisa ' + money(st.balance_after_withdrawal) + '</span>';
         renderHeroRest(st);
         return;
       }
 
       if ((st.withdrawn_total_usd || 0) > 0) {
         balMeta.classList.add('up');
-        balMeta.innerHTML = '<span class="meta-badge">★</span><span>ekuitas efektif $' +
-          num(st.equity_effective) + ' · sudah ditarik $' + num(st.withdrawn_total_usd) + '</span>';
+        balMeta.innerHTML = '<span class="meta-badge">★</span><span>ekuitas efektif ' +
+          money(st.equity_effective) + ' · sudah ditarik ' + money(st.withdrawn_total_usd) + '</span>';
         renderHeroRest(st);
         return;
       }
@@ -830,9 +862,9 @@
 
     const wdEl = $('sWithdraw');
     if (st.withdrawal_count) {
-      wdEl.textContent = '$' + num(st.withdrawn_total_usd);
+      wdEl.textContent = money(st.withdrawn_total_usd);
       wdEl.className = 'stat-value text-gold';
-      $('sWithdrawMeta').textContent = st.withdrawal_count + '× · bulan ini $' + num(st.withdrawn_month_usd);
+      $('sWithdrawMeta').textContent = st.withdrawal_count + '× · bulan ini ' + money(st.withdrawn_month_usd);
     } else {
       wdEl.textContent = '—';
       wdEl.className = 'stat-value';
@@ -923,8 +955,8 @@
             afterLabel: (c) => {
               const e = data[c.dataIndex];
               const lines = [];
-              if (useAdj && e.withdrawn_to_date > 0) lines.push('saldo $' + num(e.end_balance) +
-                ' · ditarik $' + num(e.withdrawn_to_date));
+              if (useAdj && e.withdrawn_to_date > 0) lines.push('saldo ' + money(e.end_balance) +
+                ' · ditarik ' + money(e.withdrawn_to_date));
               if (e.note) lines.push('“' + e.note + '”');
               return lines;
             }
@@ -944,7 +976,7 @@
           grid: { color: 'rgba(255,255,255,.025)', drawTicks: false },
           ticks: {
             color: '#7b8494', font: { family: 'JetBrains Mono', size: 10.5 }, padding: 10,
-            callback: (v) => sym() + Math.round(v).toLocaleString('en-US')
+            callback: (v) => compact(v)
           },
           border: { color: 'rgba(255,255,255,.06)' }
         }
@@ -1136,7 +1168,7 @@
   function renderWithdrawals() {
     const rows = state.withdrawals;
     const total = rows.reduce((a, w) => a + w.amount_usd, 0);
-    $('wdMeta').textContent = rows.length ? rows.length + '× · $' + num(total) : '—';
+    $('wdMeta').textContent = rows.length ? rows.length + '× · ' + money(total) : '—';
 
     if (!rows.length) return;
 
@@ -1144,10 +1176,10 @@
       '<div class="list-row">' +
       '<span class="list-dot" style="background:var(--gold-bright)" aria-hidden="true"></span>' +
       '<div class="list-main"><div class="list-title">' + fmtDateLong(w.date) + '</div>' +
-      '<div class="list-sub">≈ Rp ' + Math.round(w.amount).toLocaleString('id-ID') +
-        ' @ ' + Math.round(w.rate).toLocaleString('id-ID') +
-        (w.note ? ' · ' + escapeHtml(w.note) : '') + '</div></div>' +
-      '<span class="list-amount text-gold">−$' + num(w.amount_usd) + '</span>' +
+      '<div class="list-sub">' + (sameCurrency() ? '' :
+          '≈ ' + Math.round(w.amount).toLocaleString('id-ID') + ' @ ' + Math.round(w.rate).toLocaleString('id-ID') + ' · ') +
+        'penarikan' + (w.note ? ' · ' + escapeHtml(w.note) : '') + '</div></div>' +
+      '<span class="list-amount text-gold">−' + money(w.amount_usd) + '</span>' +
       '<div class="list-actions">' +
         '<button class="mini-btn" data-edit-wd="' + w.id + '" aria-label="Edit penarikan">' +
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>' +
@@ -1155,7 +1187,7 @@
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>' +
       '</div></div>'
     ).join('') + '</div>' +
-      '<div class="list-foot"><span>Total ditarik</span><span class="total text-gold">$' + num(total) + '</span></div>';
+      '<div class="list-foot"><span>Total ditarik</span><span class="total text-gold">' + money(total) + '</span></div>';
   }
 
   /** Penarikan yang terjadi setelah tanggal `from` sampai `to` (inklusif) */
@@ -1168,20 +1200,26 @@
     return st.has_data ? (st.balance_after_withdrawal ?? st.current_balance) : 0;
   }
 
+  const sameCurrency = () =>
+    (state.settings.currency || 'IDR') === (state.settings.finance_currency || 'IDR');
+
   function updateWdPreview() {
     const usd = parseFloat($('wdUsd').value);
     const rate = parseFloat($('wdRate').value);
+    const same = sameCurrency();
+    $('wdRateWrap').style.display = same ? 'none' : 'flex';
+    $('wdIdrWrap').style.display = same ? 'none' : 'flex';
     const before = baseBalance() + (state.editingWd
       ? (state.withdrawals.find((w) => w.id === state.editingWd)?.amount_usd || 0) : 0);
 
-    $('wdBefore').textContent = '$' + num(before);
+    $('wdBefore').textContent = money(before);
     if (isFinite(usd) && usd > 0) {
       const after = before - usd;
-      $('wdAfter').textContent = '$' + num(after);
+      $('wdAfter').textContent = money(after);
       $('wdAfter').className = 'preview-v ' + (after < 0 ? 'text-red' : 'text-gold');
       $('wdPreview').className = 'preview ' + (after < 0 ? 'down' : 'up');
       $('wdIdr').textContent = isFinite(rate) && rate > 0
-        ? 'Rp ' + Math.round(usd * rate).toLocaleString('id-ID') : '—';
+        ? Math.round(usd * rate).toLocaleString('id-ID') : '—';
     } else {
       $('wdAfter').textContent = '—';
       $('wdAfter').className = 'preview-v';
@@ -1196,7 +1234,7 @@
     $('wdTitle').textContent = w ? 'Edit Penarikan' : 'Tarik Dana';
     $('wdDate').value = w ? w.date : state.today;
     $('wdUsd').value = w ? w.amount_usd : '';
-    $('wdRate').value = w ? w.rate : (state.settings.usd_rate || 16000);
+    $('wdRate').value = w ? w.rate : (sameCurrency() ? 1 : (state.settings.usd_rate || 16000));
     $('wdNote').value = w && w.note ? w.note : '';
     updateWdPreview();
     $('wdOverlay').classList.add('show');
@@ -1226,7 +1264,7 @@
       });
       $('wdOverlay').classList.remove('show');
       state.editingWd = null;
-      toast('Penarikan $' + num(usd) + ' tercatat', 'success');
+      toast('Penarikan ' + money(usd) + ' tercatat', 'success');
       await loadAll(true);
       syncFormToDate($('fDate').value || state.today, true);
     } catch (e) {
@@ -1240,7 +1278,7 @@
   async function deleteWd(id) {
     const w = state.withdrawals.find((x) => x.id === id);
     const ok = await confirmDialog('Hapus penarikan?',
-      'Penarikan $' + num(w ? w.amount_usd : 0) + ' pada ' + (w ? fmtDateLong(w.date) : '') +
+      'Penarikan ' + money(w ? w.amount_usd : 0) + ' pada ' + (w ? fmtDateLong(w.date) : '') +
       ' akan dihapus permanen.', 'Hapus');
     if (!ok) return;
     try {
@@ -1288,7 +1326,7 @@
         const taken = withdrawnBetween(prev.date, date);
         $('fStart').value = Math.round((prev.end_balance - taken) * 100) / 100;
         $('hStart').textContent = taken > 0
-          ? 'dari ' + fmtDateShort(prev.date) + ' − penarikan $' + num(taken)
+          ? 'dari ' + fmtDateShort(prev.date) + ' − penarikan ' + money(taken)
           : 'otomatis dari ' + fmtDateShort(prev.date);
         $('hStart').className = 'field-hint' + (taken > 0 ? ' warn' : '');
       } else if (state.settings.initial_capital > 0) {
@@ -1350,7 +1388,7 @@
           hint.className = 'field-hint warn';
         } else {
           hint.textContent = 'nyambung dari ' + fmtDateShort(prev.date) +
-            (taken > 0 ? ' − penarikan $' + num(taken) : '');
+            (taken > 0 ? ' − penarikan ' + money(taken) : '');
           hint.className = 'field-hint ok';
         }
       }
@@ -1534,6 +1572,7 @@
 
   // Settings
   $('settingsBtn').addEventListener('click', () => {
+    $('sCurrency').value = state.settings.currency || 'IDR';
     $('sInitial').value = state.settings.initial_capital || '';
     $('sTarget').value = state.settings.monthly_target || '';
     $('settingsOverlay').classList.add('show');
@@ -1552,6 +1591,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          currency: $('sCurrency').value,
           initial_capital: parseFloat($('sInitial').value) || 0,
           monthly_target: parseFloat($('sTarget').value) || 0
         })
@@ -1590,3 +1630,4 @@
 </script>
 </body>
 </html>
+
