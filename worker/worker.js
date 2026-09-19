@@ -68,7 +68,7 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 //  AUTENTIKASI
 // ═════════════════════════════════════════════════════════
 const SESSION_DAYS = 30;
-const PBKDF2_ITER = 120000;
+const PBKDF2_ITER = 100000;   // batas maksimum Web Crypto di Cloudflare Workers
 
 const toHex = (buf) =>
   Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -1360,7 +1360,7 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading & Keuangan",
-          version: "4.0.0",
+          version: "4.0.1",
           features: ["jurnal", "keuangan", "carry_over", "auto_pay_past",
                      "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif",
                      "jurnal_idr", "multi_user"],
