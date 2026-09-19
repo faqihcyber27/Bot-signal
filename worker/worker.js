@@ -64,6 +64,186 @@ function mondayOf(d) {
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// ═════════════════════════════════════════════════════════
+//  AUTENTIKASI
+// ═════════════════════════════════════════════════════════
+const SESSION_DAYS = 30;
+const PBKDF2_ITER = 120000;
+
+const toHex = (buf) =>
+  Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+function randomHex(bytes) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return toHex(arr);
+}
+
+async function hashPassword(password, salt, iterations) {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(salt), iterations },
+    key, 256
+  );
+  return toHex(bits);
+}
+
+/** Perbandingan waktu tetap agar tidak bocor lewat timing */
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+const normalizeUsername = (u) => String(u ?? "").trim().toLowerCase();
+
+function validCredentials(username, password) {
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+    return "Username 3–32 karakter, hanya huruf, angka, titik, garis bawah, atau strip";
+  }
+  if (typeof password !== "string" || password.length < 8) {
+    return "Password minimal 8 karakter";
+  }
+  if (password.length > 200) return "Password terlalu panjang";
+  return null;
+}
+
+async function createSession(env, userId) {
+  const token = randomHex(32);
+  const expires = new Date(Date.now() + SESSION_DAYS * 86400000).toISOString();
+  await env.DB.prepare(
+    "INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)"
+  ).bind(token, userId, expires).run();
+  return { token, expires_at: expires };
+}
+
+/** Mengembalikan { id, username, role } bila token sah, atau null */
+async function authUser(request, env) {
+  const header = request.headers.get("Authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  if (!token || token.length < 16) return null;
+
+  const row = await env.DB.prepare(
+    `SELECT s.user_id, s.expires_at, u.username, u.role
+       FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token = ?`
+  ).bind(token).first();
+
+  if (!row) return null;
+  if (row.expires_at <= new Date().toISOString()) {
+    await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(token).run();
+    return null;
+  }
+  return { id: row.user_id, username: row.username, role: row.role, token };
+}
+
+async function userCount(env) {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM users").first();
+  return row?.n ?? 0;
+}
+
+async function handleRegister(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const username = normalizeUsername(b.username);
+  const password = b.password;
+  const problem = validCredentials(username, password);
+  if (problem) return fail(problem);
+
+  const existing = await env.DB.prepare("SELECT id FROM users WHERE username = ?")
+    .bind(username).first();
+  if (existing) return fail("Username sudah dipakai", 409);
+
+  // Pendaftar pertama menjadi admin dan mewarisi seluruh data lama (user_id = 1)
+  const isFirst = (await userCount(env)) === 0;
+  const salt = randomHex(16);
+  const hash = await hashPassword(password, salt, PBKDF2_ITER);
+
+  const res = await env.DB.prepare(
+    `INSERT INTO users (username, password_hash, salt, iterations, role)
+     VALUES (?,?,?,?,?)`
+  ).bind(username, hash, salt, PBKDF2_ITER, isFirst ? "admin" : "user").run();
+
+  const userId = res.meta?.last_row_id;
+  const session = await createSession(env, userId);
+
+  return json({
+    ok: true,
+    token: session.token,
+    expires_at: session.expires_at,
+    user: { id: userId, username, role: isFirst ? "admin" : "user" },
+    inherited_data: isFirst,
+  });
+}
+
+async function handleLogin(request, env) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const username = normalizeUsername(b.username);
+  const password = String(b.password ?? "");
+  if (!username || !password) return fail("Username dan password wajib diisi");
+
+  const user = await env.DB.prepare(
+    "SELECT id, username, password_hash, salt, iterations, role FROM users WHERE username = ?"
+  ).bind(username).first();
+
+  // Tetap hitung hash walau user tidak ada, agar waktu responsnya seragam
+  const salt = user ? user.salt : "00000000000000000000000000000000";
+  const iter = user ? user.iterations : PBKDF2_ITER;
+  const hash = await hashPassword(password, salt, iter);
+
+  if (!user || !safeEqual(hash, user.password_hash)) {
+    return fail("Username atau password salah", 401);
+  }
+
+  const session = await createSession(env, user.id);
+  return json({
+    ok: true,
+    token: session.token,
+    expires_at: session.expires_at,
+    user: { id: user.id, username: user.username, role: user.role },
+  });
+}
+
+async function handleLogout(request, env, user) {
+  await env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(user.token).run();
+  return json({ ok: true });
+}
+
+async function handlePasswordChange(request, env, user) {
+  let b;
+  try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
+
+  const current = String(b.current_password ?? "");
+  const next = String(b.new_password ?? "");
+  if (next.length < 8) return fail("Password baru minimal 8 karakter");
+
+  const row = await env.DB.prepare(
+    "SELECT password_hash, salt, iterations FROM users WHERE id = ?"
+  ).bind(user.id).first();
+  if (!row) return fail("Akun tidak ditemukan", 404);
+
+  const check = await hashPassword(current, row.salt, row.iterations);
+  if (!safeEqual(check, row.password_hash)) return fail("Password lama salah", 401);
+
+  const salt = randomHex(16);
+  const hash = await hashPassword(next, salt, PBKDF2_ITER);
+  await env.DB.prepare(
+    "UPDATE users SET password_hash=?, salt=?, iterations=? WHERE id=?"
+  ).bind(hash, salt, PBKDF2_ITER, user.id).run();
+
+  // Semua sesi lain dicabut, sesi sekarang dipertahankan
+  await env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?")
+    .bind(user.id, user.token).run();
+
+  return json({ ok: true });
+}
+
 // ─────────────────────────────────────────────────────────
 //  SETTINGS
 // ─────────────────────────────────────────────────────────
@@ -73,8 +253,10 @@ const SETTING_KEYS = [
 ];
 const STRING_SETTINGS = ["currency", "finance_currency", "carry_start_month"];
 
-async function readSettings(env) {
-  const res = await env.DB.prepare("SELECT key, value FROM settings").all();
+async function readSettings(env, userId) {
+  const res = await env.DB.prepare(
+    "SELECT key, value FROM user_settings WHERE user_id = ?"
+  ).bind(userId).all();
   const out = {
     initial_capital: 0, monthly_target: 0, currency: "IDR", finance_currency: "IDR",
     carry_over: 1,            // 1 = sisa bulan ini dibawa ke bulan berikutnya
@@ -90,7 +272,7 @@ async function readSettings(env) {
   return out;
 }
 
-async function handleSettingsPost(request, env) {
+async function handleSettingsPost(request, env, user) {
   let body;
   try {
     body = await request.json();
@@ -114,26 +296,27 @@ async function handleSettingsPost(request, env) {
     }
     writes.push(
       env.DB.prepare(
-        `INSERT INTO settings (key, value) VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                        updated_at = CURRENT_TIMESTAMP`
-      ).bind(key, value)
+        `INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value,
+                                                 updated_at = CURRENT_TIMESTAMP`
+      ).bind(user.id, key, value)
     );
   }
 
   if (writes.length) await env.DB.batch(writes);
-  return json({ ok: true, settings: await readSettings(env) });
+  return json({ ok: true, settings: await readSettings(env, user.id) });
 }
 
 // ─────────────────────────────────────────────────────────
 //  ENTRIES
 // ─────────────────────────────────────────────────────────
-async function allEntries(env) {
+async function allEntries(env, userId) {
   const res = await env.DB.prepare(
     `SELECT date, start_balance, end_balance, note, updated_at
        FROM daily_entries
+      WHERE user_id = ?
       ORDER BY date ASC`
-  ).all();
+  ).bind(userId).all();
 
   return (res.results ?? []).map((e) => {
     const pnl = round2(e.end_balance - e.start_balance);
@@ -150,13 +333,13 @@ async function allEntries(env) {
   });
 }
 
-async function handleEntriesGet(request, env) {
+async function handleEntriesGet(request, env, user) {
   const url = new URL(request.url);
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const limit = Math.min(parseInt(url.searchParams.get("limit")) || 500, 2000);
 
-  let entries = await allEntries(env);
+  let entries = await allEntries(env, user.id);
   if (from && isValidDate(from)) entries = entries.filter((e) => e.date >= from);
   if (to && isValidDate(to)) entries = entries.filter((e) => e.date <= to);
   if (entries.length > limit) entries = entries.slice(-limit);
@@ -164,7 +347,7 @@ async function handleEntriesGet(request, env) {
   return json({ ok: true, entries, count: entries.length });
 }
 
-async function handleEntryPost(request, env) {
+async function handleEntryPost(request, env, user) {
   let body;
   try {
     body = await request.json();
@@ -191,15 +374,15 @@ async function handleEntryPost(request, env) {
   const note = body.note ? String(body.note).slice(0, 280) : null;
 
   await env.DB.prepare(
-    `INSERT INTO daily_entries (date, start_balance, end_balance, note)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(date) DO UPDATE SET
+    `INSERT INTO daily_entries (user_id, date, start_balance, end_balance, note)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, date) DO UPDATE SET
        start_balance = excluded.start_balance,
        end_balance   = excluded.end_balance,
        note          = excluded.note,
        updated_at    = CURRENT_TIMESTAMP`
   )
-    .bind(date, round2(start), round2(end), note)
+    .bind(user.id, date, round2(start), round2(end), note)
     .run();
 
   return json({
@@ -215,14 +398,14 @@ async function handleEntryPost(request, env) {
   });
 }
 
-async function handleEntryDelete(request, env) {
+async function handleEntryDelete(request, env, user) {
   const url = new URL(request.url);
   const date = url.searchParams.get("date") ?? "";
   if (!isValidDate(date)) return fail("Format tanggal harus YYYY-MM-DD");
 
-  const res = await env.DB.prepare("DELETE FROM daily_entries WHERE date = ?")
-    .bind(date)
-    .run();
+  const res = await env.DB.prepare(
+    "DELETE FROM daily_entries WHERE user_id = ? AND date = ?"
+  ).bind(user.id, date).run();
 
   const removed = res.meta?.changes ?? 0;
   if (!removed) return fail("Entry tidak ditemukan", 404);
@@ -432,17 +615,18 @@ function computeStats(entries, settings, today, withdrawals) {
   };
 }
 
-async function handleSummary(request, env) {
+async function handleSummary(request, env, user) {
   const url = new URL(request.url);
   let today = url.searchParams.get("today") ?? "";
   if (!isValidDate(today)) today = new Date().toISOString().slice(0, 10);
 
   const [settings, entries, wdRes] = await Promise.all([
-    readSettings(env),
-    allEntries(env),
+    readSettings(env, user.id),
+    allEntries(env, user.id),
     env.DB.prepare(
-      "SELECT id, date, amount_usd, rate, amount, note FROM withdrawals ORDER BY date DESC, id DESC"
-    ).all(),
+      `SELECT id, date, amount_usd, rate, amount, note FROM withdrawals
+        WHERE user_id = ? ORDER BY date DESC, id DESC`
+    ).bind(user.id).all(),
   ]);
 
   const withdrawals = (wdRes.results ?? []).map((w) => ({
@@ -473,6 +657,7 @@ async function handleSummary(request, env) {
     ok: true,
     today,
     settings,
+    user: { id: user.id, username: user.username, role: user.role },
     stats,
     entries,
     withdrawals,
@@ -520,19 +705,19 @@ const expenseAppliesTo = (e, month) =>
     ? (!e.start_month || e.start_month <= month) && (!e.end_month || e.end_month >= month)
     : e.month === month;
 
-async function loadFinanceRaw(env) {
+async function loadFinanceRaw(env, userId) {
   const [inc, debts, pays, exp, trading, wd] = await Promise.all([
-    env.DB.prepare("SELECT * FROM incomes ORDER BY month DESC, id DESC").all(),
-    env.DB.prepare("SELECT * FROM debts ORDER BY id ASC").all(),
-    env.DB.prepare("SELECT * FROM debt_payments").all(),
-    env.DB.prepare("SELECT * FROM expenses ORDER BY id ASC").all(),
+    env.DB.prepare("SELECT * FROM incomes WHERE user_id = ? ORDER BY month DESC, id DESC").bind(userId).all(),
+    env.DB.prepare("SELECT * FROM debts WHERE user_id = ? ORDER BY id ASC").bind(userId).all(),
+    env.DB.prepare("SELECT * FROM debt_payments WHERE user_id = ?").bind(userId).all(),
+    env.DB.prepare("SELECT * FROM expenses WHERE user_id = ? ORDER BY id ASC").bind(userId).all(),
     env.DB.prepare(
       `SELECT substr(date,1,7) AS month,
               COALESCE(SUM(end_balance - start_balance),0) AS pnl,
               COUNT(*) AS days
-         FROM daily_entries GROUP BY substr(date,1,7)`
-    ).all(),
-    env.DB.prepare("SELECT * FROM withdrawals ORDER BY date DESC, id DESC").all(),
+         FROM daily_entries WHERE user_id = ? GROUP BY substr(date,1,7)`
+    ).bind(userId).all(),
+    env.DB.prepare("SELECT * FROM withdrawals WHERE user_id = ? ORDER BY date DESC, id DESC").bind(userId).all(),
   ]);
 
   return {
@@ -559,12 +744,12 @@ async function loadFinanceRaw(env) {
  * dan tidak pernah menimpa baris yang sudah ada (termasuk yang sengaja
  * ditandai "belum bayar" oleh user, yaitu baris beramount 0).
  */
-async function autoPayPastDebts(env, today) {
+async function autoPayPastDebts(env, today, userId) {
   const currentMonth = today.slice(0, 7);
 
   const [debtsRes, paysRes] = await Promise.all([
-    env.DB.prepare("SELECT * FROM debts").all(),
-    env.DB.prepare("SELECT debt_id, month, amount FROM debt_payments").all(),
+    env.DB.prepare("SELECT * FROM debts WHERE user_id = ?").bind(userId).all(),
+    env.DB.prepare("SELECT debt_id, month, amount FROM debt_payments WHERE user_id = ?").bind(userId).all(),
   ]);
 
   const debts = debtsRes.results ?? [];
@@ -594,8 +779,8 @@ async function autoPayPastDebts(env, today) {
         const amount = round2(Math.min(d.monthly_installment, remaining));
         inserts.push(
           env.DB.prepare(
-            "INSERT INTO debt_payments (debt_id, month, amount, auto) VALUES (?,?,?,1)"
-          ).bind(d.id, m, amount)
+            "INSERT INTO debt_payments (user_id, debt_id, month, amount, auto) VALUES (?,?,?,?,1)"
+          ).bind(userId, d.id, m, amount)
         );
         remaining = round2(remaining - amount);
       }
@@ -605,8 +790,8 @@ async function autoPayPastDebts(env, today) {
     if (remaining <= 0.009 && d.status !== "lunas") {
       closes.push(
         env.DB.prepare(
-          "UPDATE debts SET status='lunas', updated_at=CURRENT_TIMESTAMP WHERE id=?"
-        ).bind(d.id)
+          "UPDATE debts SET status='lunas', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?"
+        ).bind(d.id, userId)
       );
     }
   }
@@ -616,20 +801,20 @@ async function autoPayPastDebts(env, today) {
 }
 
 /** Sinkronkan kolom status dengan akumulasi pembayaran sesungguhnya */
-async function syncDebtStatus(env, debtId) {
+async function syncDebtStatus(env, debtId, userId) {
   const row = await env.DB.prepare(
     `SELECT d.total_amount AS total,
             COALESCE((SELECT SUM(amount) FROM debt_payments WHERE debt_id = d.id), 0) AS paid,
             d.status AS status
-       FROM debts d WHERE d.id = ?`
-  ).bind(debtId).first();
+       FROM debts d WHERE d.id = ? AND d.user_id = ?`
+  ).bind(debtId, userId).first();
   if (!row) return;
 
   const next = row.paid >= row.total - 0.009 ? "lunas" : "aktif";
   if (next !== row.status) {
     await env.DB.prepare(
-      "UPDATE debts SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
-    ).bind(next, debtId).run();
+      "UPDATE debts SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?"
+    ).bind(next, debtId, userId).run();
   }
 }
 
@@ -902,22 +1087,22 @@ function buildFinance(raw, month, today, settings) {
   };
 }
 
-async function handleFinance(request, env) {
+async function handleFinance(request, env, user) {
   const url = new URL(request.url);
   let month = url.searchParams.get("month") ?? "";
   let today = url.searchParams.get("today") ?? "";
   if (!isValidDate(today)) today = new Date().toISOString().slice(0, 10);
   if (!isValidMonth(month)) month = today.slice(0, 7);
 
-  const settings = await readSettings(env);
-  if (Number(settings.auto_pay_past) !== 0) await autoPayPastDebts(env, today);
+  const settings = await readSettings(env, user.id);
+  if (Number(settings.auto_pay_past) !== 0) await autoPayPastDebts(env, today, user.id);
 
-  const raw = await loadFinanceRaw(env);
+  const raw = await loadFinanceRaw(env, user.id);
   return json({ ok: true, settings, ...buildFinance(raw, month, today, settings) });
 }
 
 // ── Pemasukan ──
-async function handleIncomePost(request, env) {
+async function handleIncomePost(request, env, user) {
   let b;
   try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
 
@@ -932,20 +1117,21 @@ async function handleIncomePost(request, env) {
 
   if (b.id) {
     await env.DB.prepare(
-      `UPDATE incomes SET month=?, label=?, amount=?, category=?, note=? WHERE id=?`
-    ).bind(month, label, round2(amount), category, note, Number(b.id)).run();
+      `UPDATE incomes SET month=?, label=?, amount=?, category=?, note=?
+        WHERE id=? AND user_id=?`
+    ).bind(month, label, round2(amount), category, note, Number(b.id), user.id).run();
     return json({ ok: true, id: Number(b.id) });
   }
 
   const res = await env.DB.prepare(
-    `INSERT INTO incomes (month, label, amount, category, note) VALUES (?,?,?,?,?)`
-  ).bind(month, label, round2(amount), category, note).run();
+    `INSERT INTO incomes (user_id, month, label, amount, category, note) VALUES (?,?,?,?,?,?)`
+  ).bind(user.id, month, label, round2(amount), category, note).run();
 
   return json({ ok: true, id: res.meta?.last_row_id ?? null });
 }
 
 // ── Hutang ──
-async function handleDebtPost(request, env) {
+async function handleDebtPost(request, env, user) {
   let b;
   try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
 
@@ -975,46 +1161,46 @@ async function handleDebtPost(request, env) {
       `UPDATE debts SET label=?, total_amount=?, monthly_installment=?, due_day=?,
                         final_due_date=?, start_month=?, status=?, note=?,
                         updated_at=CURRENT_TIMESTAMP
-        WHERE id=?`
-    ).bind(label, round2(total), round2(inst), dueDay, finalDue, startMonth, status, note, Number(b.id)).run();
+        WHERE id=? AND user_id=?`
+    ).bind(label, round2(total), round2(inst), dueDay, finalDue, startMonth, status, note, Number(b.id), user.id).run();
     return json({ ok: true, id: Number(b.id) });
   }
 
   const res = await env.DB.prepare(
-    `INSERT INTO debts (label, total_amount, monthly_installment, due_day,
+    `INSERT INTO debts (user_id, label, total_amount, monthly_installment, due_day,
                         final_due_date, start_month, status, note)
-     VALUES (?,?,?,?,?,?,?,?)`
-  ).bind(label, round2(total), round2(inst), dueDay, finalDue, startMonth, status, note).run();
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).bind(user.id, label, round2(total), round2(inst), dueDay, finalDue, startMonth, status, note).run();
 
   return json({ ok: true, id: res.meta?.last_row_id ?? null });
 }
 
-async function handleDebtPay(request, env) {
+async function handleDebtPay(request, env, user) {
   if (request.method === "DELETE") {
     const url = new URL(request.url);
     const debtId = Number(url.searchParams.get("debt_id"));
     const month = url.searchParams.get("month") ?? "";
     if (!debtId || !isValidMonth(month)) return fail("debt_id dan month wajib diisi");
-    const settings = await readSettings(env);
+    const settings = await readSettings(env, user.id);
     const currentMonth = new Date().toISOString().slice(0, 7);
     const autoOn = Number(settings.auto_pay_past) !== 0;
 
     if (autoOn && month < currentMonth) {
       // Simpan penanda amount 0 supaya backfill tidak mengisinya lagi
       await env.DB.prepare(
-        `INSERT INTO debt_payments (debt_id, month, amount, auto) VALUES (?,?,0,2)
+        `INSERT INTO debt_payments (user_id, debt_id, month, amount, auto) VALUES (?,?,?,0,2)
          ON CONFLICT(debt_id, month) DO UPDATE SET amount = 0, auto = 2,
                                                    paid_at = CURRENT_TIMESTAMP`
-      ).bind(debtId, month).run();
-      await syncDebtStatus(env, debtId);
+      ).bind(user.id, debtId, month).run();
+      await syncDebtStatus(env, debtId, user.id);
       return json({ ok: true, marked: "belum_bayar" });
     }
 
     const res = await env.DB.prepare(
-      "DELETE FROM debt_payments WHERE debt_id = ? AND month = ?"
-    ).bind(debtId, month).run();
+      "DELETE FROM debt_payments WHERE debt_id = ? AND month = ? AND user_id = ?"
+    ).bind(debtId, month, user.id).run();
     if (!(res.meta?.changes ?? 0)) return fail("Pembayaran tidak ditemukan", 404);
-    await syncDebtStatus(env, debtId);
+    await syncDebtStatus(env, debtId, user.id);
     return json({ ok: true });
   }
 
@@ -1026,30 +1212,32 @@ async function handleDebtPay(request, env) {
   if (!debtId) return fail("debt_id wajib diisi");
   if (!isValidMonth(month)) return fail("Bulan harus format YYYY-MM");
 
-  const debt = await env.DB.prepare("SELECT * FROM debts WHERE id = ?").bind(debtId).first();
+  const debt = await env.DB.prepare(
+    "SELECT * FROM debts WHERE id = ? AND user_id = ?"
+  ).bind(debtId, user.id).first();
   if (!debt) return fail("Hutang tidak ditemukan", 404);
 
   let amount = Number(b.amount);
   if (!isFinite(amount) || amount <= 0) amount = debt.monthly_installment;
 
   await env.DB.prepare(
-    `INSERT INTO debt_payments (debt_id, month, amount, auto) VALUES (?,?,?,0)
+    `INSERT INTO debt_payments (user_id, debt_id, month, amount, auto) VALUES (?,?,?,?,0)
      ON CONFLICT(debt_id, month) DO UPDATE SET amount = excluded.amount,
                                                auto = 0,
                                                paid_at = CURRENT_TIMESTAMP`
-  ).bind(debtId, month, round2(amount)).run();
+  ).bind(user.id, debtId, month, round2(amount)).run();
 
-  await syncDebtStatus(env, debtId);
+  await syncDebtStatus(env, debtId, user.id);
 
   const sum = await env.DB.prepare(
-    "SELECT COALESCE(SUM(amount),0) AS paid FROM debt_payments WHERE debt_id = ?"
-  ).bind(debtId).first();
+    "SELECT COALESCE(SUM(amount),0) AS paid FROM debt_payments WHERE debt_id = ? AND user_id = ?"
+  ).bind(debtId, user.id).first();
 
   return json({ ok: true, paid_total: round2(sum?.paid ?? 0) });
 }
 
 // ── Pengeluaran ──
-async function handleExpensePost(request, env) {
+async function handleExpensePost(request, env, user) {
   let b;
   try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
 
@@ -1084,21 +1272,21 @@ async function handleExpensePost(request, env) {
     await env.DB.prepare(
       `UPDATE expenses SET label=?, amount=?, category=?, type=?, month=?,
                            start_month=?, end_month=?, due_day=?, note=?
-        WHERE id=?`
-    ).bind(label, round2(amount), category, type, month, startMonth, endMonth, dueDay, note, Number(b.id)).run();
+        WHERE id=? AND user_id=?`
+    ).bind(label, round2(amount), category, type, month, startMonth, endMonth, dueDay, note, Number(b.id), user.id).run();
     return json({ ok: true, id: Number(b.id) });
   }
 
   const res = await env.DB.prepare(
-    `INSERT INTO expenses (label, amount, category, type, month, start_month, end_month, due_day, note)
-     VALUES (?,?,?,?,?,?,?,?,?)`
-  ).bind(label, round2(amount), category, type, month, startMonth, endMonth, dueDay, note).run();
+    `INSERT INTO expenses (user_id, label, amount, category, type, month, start_month, end_month, due_day, note)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(user.id, label, round2(amount), category, type, month, startMonth, endMonth, dueDay, note).run();
 
   return json({ ok: true, id: res.meta?.last_row_id ?? null });
 }
 
 // ── Penarikan dari akun trading ──
-async function handleWithdrawalPost(request, env) {
+async function handleWithdrawalPost(request, env, user) {
   let b;
   try { b = await request.json(); } catch { return fail("JSON tidak valid"); }
 
@@ -1108,7 +1296,7 @@ async function handleWithdrawalPost(request, env) {
   const usd = Number(b.amount_usd);
   if (!isFinite(usd) || usd <= 0) return fail("Nominal penarikan tidak valid");
 
-  const settings = await readSettings(env);
+  const settings = await readSettings(env, user.id);
   let rate = Number(b.rate);
   if (!isFinite(rate) || rate <= 0) {
     rate = settings.currency === settings.finance_currency
@@ -1121,29 +1309,34 @@ async function handleWithdrawalPost(request, env) {
 
   if (b.id) {
     await env.DB.prepare(
-      `UPDATE withdrawals SET date=?, amount_usd=?, rate=?, amount=?, note=? WHERE id=?`
-    ).bind(date, round2(usd), round2(rate), amount, note, Number(b.id)).run();
+      `UPDATE withdrawals SET date=?, amount_usd=?, rate=?, amount=?, note=?
+        WHERE id=? AND user_id=?`
+    ).bind(date, round2(usd), round2(rate), amount, note, Number(b.id), user.id).run();
     return json({ ok: true, id: Number(b.id), amount });
   }
 
   const res = await env.DB.prepare(
-    `INSERT INTO withdrawals (date, amount_usd, rate, amount, note) VALUES (?,?,?,?,?)`
-  ).bind(date, round2(usd), round2(rate), amount, note).run();
+    `INSERT INTO withdrawals (user_id, date, amount_usd, rate, amount, note) VALUES (?,?,?,?,?,?)`
+  ).bind(user.id, date, round2(usd), round2(rate), amount, note).run();
 
   return json({ ok: true, id: res.meta?.last_row_id ?? null, amount });
 }
 
 /** DELETE generik untuk incomes / debts / expenses / withdrawals */
-async function handleFinanceDelete(request, env, table) {
+async function handleFinanceDelete(request, env, table, user) {
   const url = new URL(request.url);
   const id = Number(url.searchParams.get("id"));
   if (!id) return fail("Parameter id wajib diisi");
 
   if (table === "debts") {
-    await env.DB.prepare("DELETE FROM debt_payments WHERE debt_id = ?").bind(id).run();
+    await env.DB.prepare(
+      "DELETE FROM debt_payments WHERE debt_id = ? AND user_id = ?"
+    ).bind(id, user.id).run();
   }
 
-  const res = await env.DB.prepare(`DELETE FROM ${table} WHERE id = ?`).bind(id).run();
+  const res = await env.DB.prepare(
+    `DELETE FROM ${table} WHERE id = ? AND user_id = ?`
+  ).bind(id, user.id).run();
   if (!(res.meta?.changes ?? 0)) return fail("Data tidak ditemukan", 404);
   return json({ ok: true, deleted: id });
 }
@@ -1162,61 +1355,80 @@ export default {
     const method = request.method;
 
     try {
-      if (path === "/api/summary" && method === "GET") return await handleSummary(request, env);
+      // ── Endpoint publik ──
+      if (path === "/" || path === "/health") {
+        return json({
+          ok: true,
+          service: "SKFaq · Jurnal Trading & Keuangan",
+          version: "4.0.0",
+          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past",
+                     "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif",
+                     "jurnal_idr", "multi_user"],
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      if (path === "/api/auth/status" && method === "GET") {
+        return json({ ok: true, needs_setup: (await userCount(env)) === 0 });
+      }
+
+      if (path === "/api/auth/register" && method === "POST") return await handleRegister(request, env);
+      if (path === "/api/auth/login" && method === "POST") return await handleLogin(request, env);
+
+      // ── Mulai sini wajib login ──
+      const user = await authUser(request, env);
+      if (!user) return fail("Sesi tidak valid atau sudah berakhir", 401);
+
+      if (path === "/api/auth/me" && method === "GET") {
+        return json({ ok: true, user: { id: user.id, username: user.username, role: user.role } });
+      }
+      if (path === "/api/auth/logout" && method === "POST") return await handleLogout(request, env, user);
+      if (path === "/api/auth/password" && method === "POST") return await handlePasswordChange(request, env, user);
+
+      if (path === "/api/summary" && method === "GET") return await handleSummary(request, env, user);
 
       if (path === "/api/entries") {
-        if (method === "GET") return await handleEntriesGet(request, env);
-        if (method === "POST") return await handleEntryPost(request, env);
-        if (method === "DELETE") return await handleEntryDelete(request, env);
+        if (method === "GET") return await handleEntriesGet(request, env, user);
+        if (method === "POST") return await handleEntryPost(request, env, user);
+        if (method === "DELETE") return await handleEntryDelete(request, env, user);
         return fail("Method tidak didukung", 405);
       }
 
-      if (path === "/api/finance" && method === "GET") return await handleFinance(request, env);
+      if (path === "/api/finance" && method === "GET") return await handleFinance(request, env, user);
 
       if (path === "/api/finance/income") {
-        if (method === "POST") return await handleIncomePost(request, env);
-        if (method === "DELETE") return await handleFinanceDelete(request, env, "incomes");
+        if (method === "POST") return await handleIncomePost(request, env, user);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "incomes", user);
         return fail("Method tidak didukung", 405);
       }
 
       if (path === "/api/finance/debt") {
-        if (method === "POST") return await handleDebtPost(request, env);
-        if (method === "DELETE") return await handleFinanceDelete(request, env, "debts");
+        if (method === "POST") return await handleDebtPost(request, env, user);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "debts", user);
         return fail("Method tidak didukung", 405);
       }
 
       if (path === "/api/finance/debt/pay") {
-        if (method === "POST" || method === "DELETE") return await handleDebtPay(request, env);
+        if (method === "POST" || method === "DELETE") return await handleDebtPay(request, env, user);
         return fail("Method tidak didukung", 405);
       }
 
       if (path === "/api/finance/withdrawal") {
-        if (method === "POST") return await handleWithdrawalPost(request, env);
-        if (method === "DELETE") return await handleFinanceDelete(request, env, "withdrawals");
+        if (method === "POST") return await handleWithdrawalPost(request, env, user);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "withdrawals", user);
         return fail("Method tidak didukung", 405);
       }
 
       if (path === "/api/finance/expense") {
-        if (method === "POST") return await handleExpensePost(request, env);
-        if (method === "DELETE") return await handleFinanceDelete(request, env, "expenses");
+        if (method === "POST") return await handleExpensePost(request, env, user);
+        if (method === "DELETE") return await handleFinanceDelete(request, env, "expenses", user);
         return fail("Method tidak didukung", 405);
       }
 
       if (path === "/api/settings") {
-        if (method === "GET") return json({ ok: true, settings: await readSettings(env) });
-        if (method === "POST") return await handleSettingsPost(request, env);
+        if (method === "GET") return json({ ok: true, settings: await readSettings(env, user.id) });
+        if (method === "POST") return await handleSettingsPost(request, env, user);
         return fail("Method tidak didukung", 405);
-      }
-
-      if (path === "/" || path === "/health") {
-        return json({
-          ok: true,
-          service: "SKFaq · Jurnal Trading Harian",
-          version: "3.5.0",
-          // Penanda cepat untuk memastikan worker yang aktif sudah versi terbaru
-          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif", "jurnal_idr"],
-          timestamp: new Date().toISOString(),
-        });
       }
 
       return fail("Not found", 404);
