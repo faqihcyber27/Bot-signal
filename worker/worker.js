@@ -69,20 +69,19 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // ─────────────────────────────────────────────────────────
 const SETTING_KEYS = [
   "initial_capital", "monthly_target", "currency", "finance_currency",
-  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past", "usd_rate", "withdraw_as_income",
+  "carry_over", "carry_start_month", "carry_opening", "auto_pay_past", "usd_rate",
 ];
 const STRING_SETTINGS = ["currency", "finance_currency", "carry_start_month"];
 
 async function readSettings(env) {
   const res = await env.DB.prepare("SELECT key, value FROM settings").all();
   const out = {
-    initial_capital: 0, monthly_target: 0, currency: "USD", finance_currency: "IDR",
+    initial_capital: 0, monthly_target: 0, currency: "IDR", finance_currency: "IDR",
     carry_over: 1,            // 1 = sisa bulan ini dibawa ke bulan berikutnya
     carry_start_month: "",    // "" = otomatis dari bulan data paling awal
     carry_opening: 0,         // saldo pembuka pada carry_start_month
     auto_pay_past: 1,         // anggap cicilan bulan-bulan lalu sudah dibayar
-    usd_rate: 16000,          // kurs default USD → mata uang keuangan
-    withdraw_as_income: 1,    // penarikan trading ikut dihitung sebagai pemasukan
+    usd_rate: 16000,          // kurs bila mata uang jurnal ≠ mata uang keuangan
   };
   for (const row of res.results ?? []) {
     if (STRING_SETTINGS.includes(row.key)) out[row.key] = row.value;
@@ -719,10 +718,8 @@ function buildFinance(raw, month, today, settings) {
     const incomeManual = raw.incomes
       .filter((i) => i.month === m)
       .reduce((a, i) => a + i.amount, 0);
-    const incomeWithdraw = Number(settings.withdraw_as_income) === 0
-      ? 0
-      : raw.withdrawals.filter((w) => w.month === m).reduce((a, w) => a + w.amount, 0);
-    const income = incomeManual + incomeWithdraw;
+    // Penarikan trading TIDAK dihitung otomatis — dicatat manual sebagai pemasukan
+    const income = incomeManual;
 
     const installment = debts.reduce((a, d) => a + dueFor(d, m), 0);
 
@@ -735,7 +732,6 @@ function buildFinance(raw, month, today, settings) {
       month: m,
       income: round2(income),
       income_manual: round2(incomeManual),
-      income_withdraw: round2(incomeWithdraw),
       installment: round2(installment),
       expense_rutin: round2(rutin),
       expense_sekali: round2(sekali),
@@ -836,7 +832,6 @@ function buildFinance(raw, month, today, settings) {
     summary: {
       income_total: cur.income,
       income_manual: cur.income_manual,
-      income_withdraw: cur.income_withdraw,
       installment_total: cur.installment,
       installment_paid: round2(
         raw.payments
@@ -867,8 +862,12 @@ function buildFinance(raw, month, today, settings) {
       expense_by_category,
       trading_pnl: round2(tradingRow ? tradingRow.pnl : 0),
       trading_days: tradingRow ? tradingRow.days : 0,
-      withdraw_usd: round2(
+      // Hanya informasi: dipakai sebagai saran pencatatan manual di daftar pemasukan
+      withdraw_source: round2(
         raw.withdrawals.filter((w) => w.month === month).reduce((a, w) => a + w.amount_usd, 0)
+      ),
+      withdraw_amount: round2(
+        raw.withdrawals.filter((w) => w.month === month).reduce((a, w) => a + w.amount, 0)
       ),
       withdraw_count: raw.withdrawals.filter((w) => w.month === month).length,
     },
@@ -1111,7 +1110,11 @@ async function handleWithdrawalPost(request, env) {
 
   const settings = await readSettings(env);
   let rate = Number(b.rate);
-  if (!isFinite(rate) || rate <= 0) rate = Number(settings.usd_rate) || 1;
+  if (!isFinite(rate) || rate <= 0) {
+    rate = settings.currency === settings.finance_currency
+      ? 1
+      : Number(settings.usd_rate) || 1;
+  }
 
   const amount = round2(usd * rate);
   const note = b.note ? String(b.note).slice(0, 200) : null;
@@ -1209,9 +1212,9 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading Harian",
-          version: "3.4.0",
+          version: "3.5.0",
           // Penanda cepat untuk memastikan worker yang aktif sudah versi terbaru
-          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif"],
+          features: ["jurnal", "keuangan", "carry_over", "auto_pay_past", "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif", "jurnal_idr"],
           timestamp: new Date().toISOString(),
         });
       }
