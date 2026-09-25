@@ -881,6 +881,12 @@ function buildFinance(raw, month, today, settings) {
 
   const currentMonth = today.slice(0, 7);
 
+  /** Nominal yang benar-benar tercatat dibayar untuk sebuah hutang pada bulan m */
+  const paidIn = (debtId, m) => {
+    const row = paidByKey.get(debtId + "|" + m);
+    return row && row.amount > 0 ? row.amount : 0;
+  };
+
   /**
    * Cicilan yang jatuh pada bulan `m` untuk satu hutang.
    * Berhenti sendiri ketika tenor habis atau total hutang sudah tertutup,
@@ -908,7 +914,12 @@ function buildFinance(raw, month, today, settings) {
     // Penarikan trading TIDAK dihitung otomatis — dicatat manual sebagai pemasukan
     const income = incomeManual;
 
-    const installment = debts.reduce((a, d) => a + dueFor(d, m), 0);
+    // Uang yang benar-benar keluar lebih penting daripada jadwal: kalau pembayaran
+    // bulan itu tercatat lebih besar dari jadwal, yang dipakai adalah yang nyata.
+    const installmentScheduled = debts.reduce((a, d) => a + dueFor(d, m), 0);
+    const installment = debts.reduce(
+      (a, d) => a + Math.max(dueFor(d, m), paidIn(d.id, m)), 0
+    );
 
     const applicable = raw.expenses.filter((e) => expenseAppliesTo(e, m));
     const rutin = applicable.filter((e) => e.type === "rutin").reduce((a, e) => a + e.amount, 0);
@@ -920,6 +931,7 @@ function buildFinance(raw, month, today, settings) {
       income: round2(income),
       income_manual: round2(incomeManual),
       installment: round2(installment),
+      installment_scheduled: round2(installmentScheduled),
       expense_rutin: round2(rutin),
       expense_sekali: round2(sekali),
       expense_total: round2(rutin + sekali),
@@ -1020,6 +1032,7 @@ function buildFinance(raw, month, today, settings) {
       income_total: cur.income,
       income_manual: cur.income_manual,
       installment_total: cur.installment,
+      installment_scheduled: cur.installment_scheduled,
       installment_paid: round2(
         raw.payments
           .filter((p) => p.month === month && p.amount > 0)
@@ -1362,7 +1375,7 @@ export default {
         return json({
           ok: true,
           service: "SKFaq · Jurnal Trading & Keuangan",
-          version: "4.0.2",
+          version: "4.1.0",
           features: ["jurnal", "keuangan", "carry_over", "auto_pay_past",
                      "jadwal_cicilan", "penarikan_di_jurnal", "ekuitas_efektif",
                      "jurnal_idr", "multi_user"],
@@ -1440,4 +1453,3 @@ export default {
     }
   },
 };
-
