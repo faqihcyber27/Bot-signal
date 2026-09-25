@@ -787,9 +787,17 @@
     }
 
     $('sInstallment').textContent = money(s.installment_total);
-    $('sInstallmentMeta').textContent = s.installment_total > 0
-      ? 'dibayar ' + money(s.installment_paid) + ' · sisa ' + money(s.installment_unpaid)
-      : 'tidak ada cicilan bulan ini';
+    const selisih = Math.round(s.installment_paid - (s.installment_scheduled || 0));
+    if (s.installment_total <= 0) {
+      $('sInstallmentMeta').textContent = 'tidak ada cicilan bulan ini';
+    } else if (selisih > 0) {
+      // Yang dibayar melebihi jadwal — yang dipakai menghitung sisa adalah yang nyata
+      $('sInstallmentMeta').textContent = 'dibayar ' + money(s.installment_paid) +
+        ' · jadwal ' + money(s.installment_scheduled) + ' (lebih ' + money(selisih) + ')';
+    } else {
+      $('sInstallmentMeta').textContent = 'dibayar ' + money(s.installment_paid) +
+        ' · sisa ' + money(s.installment_unpaid);
+    }
 
     $('sFixed').textContent = money(s.expense_rutin);
     $('sFixedMeta').textContent = state.data.expenses.filter((e) => e.type === 'rutin').length + ' pos rutin';
@@ -1458,4 +1466,3 @@
 </script>
 </body>
 </html>
-
